@@ -34,8 +34,15 @@ def generate_ai_report(summary_stats, opportunities_sample):
     """
     Generates an executive report using Gemini-3-Flash-Preview.
     """
-    if "GOOGLE_API_KEY" not in st.secrets:
-        return "⚠️ Configura tu API Key para ver el reporte de IA."
+    # Use the same flexible detection logic
+    api_key = None
+    if "GOOGLE_API_KEY" in st.secrets:
+        api_key = st.secrets["GOOGLE_API_KEY"]
+    elif "general" in st.secrets and "GOOGLE_API_KEY" in st.secrets["general"]:
+        api_key = st.secrets["general"]["GOOGLE_API_KEY"]
+
+    if not api_key:
+        return "⚠️ Configura tu API Key en los Secrets de Streamlit para ver el reporte de IA."
 
     try:
         model = genai.GenerativeModel('gemini-3-flash-preview')
