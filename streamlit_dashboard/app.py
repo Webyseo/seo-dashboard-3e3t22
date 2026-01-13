@@ -236,7 +236,27 @@ if 'current_import_id' in locals() and current_import_id:
                     if p <= 20: return "11-20"
                     return "20+"
                 df['bucket'] = df[pos_col].apply(get_bucket)
-                fig = px.bar(df['bucket'].value_counts().reset_index(), x='index', y='bucket', labels={'index':'Rango', 'bucket':'Keywords'}, title="Distribución de Rankings")
+                v_counts = df['bucket'].value_counts().reset_index()
+                v_counts.columns = ['Rango', 'Keywords']
+                
+                # Order buckets logically
+                order = ["Top 3", "4-10", "11-20", "20+"]
+                v_counts['Rango'] = pd.Categorical(v_counts['Rango'], categories=order, ordered=True)
+                v_counts = v_counts.sort_values('Rango')
+
+                fig = px.bar(
+                    v_counts, 
+                    x='Rango', 
+                    y='Keywords', 
+                    title="Distribución de Rankings",
+                    color='Rango',
+                    color_discrete_map={
+                        "Top 3": "#2E7D32", 
+                        "4-10": "#4CAF50", 
+                        "11-20": "#FFC107", 
+                        "20+": "#F44336"
+                    }
+                )
                 st.plotly_chart(fig, use_container_width=True)
 
         with t2:
