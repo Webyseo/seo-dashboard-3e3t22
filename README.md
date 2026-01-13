@@ -1,36 +1,58 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SEO Executive Dashboard
 
-## Getting Started
+Aplicación web profesional para el análisis de rendimiento SEO, diseñada para agencias y consultores. Permite visualizar KPIs, comparar competidores y generar informes ejecutivos en PDF.
 
-First, run the development server:
+## 🚀 Instalación y Puesta en Marcha
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+### Prerrequisitos
+- Node.js 18+ instalado.
+- Un archivo CSV mensual con los datos de exportación.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Pasos Iniciales
+1.  Clona el repositorio o descomprime el proyecto.
+2.  Instala las dependencias:
+    ```bash
+    npm install
+    ```
+3.  Inicializa la base de datos (SQLite):
+    ```bash
+    npx prisma db push
+    ```
+4.  Inicia el servidor de desarrollo:
+    ```bash
+    npm run dev
+    ```
+5.  Abre [http://localhost:3000](http://localhost:3000) en tu navegador.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 📊 Guía de Uso
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 1. Crear Proyecto
+Al iniciar, verás la pantalla "Your Projects". Crea un nuevo proyecto para tu cliente (ej. "Radiofonics"). Esto te llevará al dashboard vacío del proyecto.
 
-## Learn More
+### 2. Importar Datos (CSV)
+En la pestaña "Data Quality" o en el inicio si no hay datos:
+1.  Selecciona el **Mes** del reporte (ej. "Octubre 2023").
+2.  Sube el archivo CSV.
+3.  El sistema detectará automáticamente las columnas y los dominios de la competencia.
 
-To learn more about Next.js, take a look at the following resources:
+**Nota**: El sistema maneja valores "N/D", porcentajes y monedas automáticamente.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 3. Interpretar KPIs (Executive Summary)
+-   **Share of Voice (SoV)**: Tu visibilidad comparada con la visibilidad total del mercado (suma de todos los dominios rastreados).
+-   **Striking Distance**: Palabras clave en posiciones 4-10 (Página 1 baja), donde una pequeña optimización puede generar gran impacto.
+-   **Top 3 / 10 / 20**: Cantidad de palabras clave en estos rangos.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 4. Pestañas de Análisis
+-   **Competition**: Tabla comparativa con competidores (SoV, Visibilidad, Posición Media).
+-   **Rankings**: Distribución de palabras clave por rangos de posición.
+-   **Groups**: Rendimiento agrupado por "Grupo Palabra Clave".
+-   **Opportunities**: Listado automático de "Quick Wins" (Pos 4-10 con alto volumen).
 
-## Deploy on Vercel
+### 5. Exportar Informe
+En la pestaña "Executive Summary", pulsa el botón **"Export PDF"**. Esto generará un archivo PDF profesional con los KPIs principales y los insights automáticos, listo para enviar por email.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 🛠 Comandos Útiles
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+-   `npm run build`: Construir para producción.
+-   `npx prisma studio`: Ver la base de datos visualmente.
+-   `npx prisma db push`: Actualizar esquema de BD si haces cambios.

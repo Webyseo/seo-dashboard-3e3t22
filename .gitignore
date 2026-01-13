@@ -38,4 +38,11 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts
+
+# python / streamlit
+__pycache__/
+*.py[cod]
+.streamlit/secrets.toml
+seo_dashboard.db
+*.csv
+

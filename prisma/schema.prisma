@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  imports   Import[]
+  keywords  Keyword[]
+}
+
+model Import {
+  id        String   @id @default(uuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id])
+  monthLabel String  // Format: "YYYY-MM"
+  filename   String
+  importedAt DateTime @default(now())
+  
+  metrics    KeywordMetric[]
+  rankings   DomainRanking[]
+}
+
+model Keyword {
+  id        String   @id @default(uuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id])
+  text      String
+  group     String?
+
+  metrics   KeywordMetric[]
+  rankings  DomainRanking[]
+
+  @@unique([projectId, text]) // Unique keyword per project
+}
+
+model KeywordMetric {
+  id            String  @id @default(uuid())
+  importId      String
+  import        Import  @relation(fields: [importId], references: [id])
+  keywordId     String
+  keyword       Keyword @relation(fields: [keywordId], references: [id])
+
+  difficulty    Int?    // "Google Dificultad..."
+  volume        Int?    // "# de búsquedas"
+  impressions   Int?
+  ctr           Float?  // Converted from "33.3%"
+  competition   String? // "Bajo", "Medio", etc.
+  
+  cpcAvg        Float?
+  cpcMin        Float?
+  cpcMax        Float?
+  
+  trend3m       String? // "+10", "-30", raw string
+}
+
+model DomainRanking {
+  id            String  @id @default(uuid())
+  importId      String
+  import        Import  @relation(fields: [importId], references: [id])
+  keywordId     String
+  keyword       Keyword @relation(fields: [keywordId], references: [id])
+  
+  domain        String  // "radiofonics.com" or competitor
+  visibility    Float?  // "75.0"
+  position      Int?    // 1-20
+  outOfTop20    Boolean @default(false) // If "No está entre las primeras 20"
+  url           String? // "Google URL encontrada"
+  
+  @@index([importId, domain])
+}
