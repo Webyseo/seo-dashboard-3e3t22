@@ -2,7 +2,12 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 import etl
+import database
 import plotly.express as px
+from datetime import datetime
+
+# Initialize Database
+database.init_db()
 
 # Configuration
 st.set_page_config(
@@ -19,44 +24,35 @@ elif "general" in st.secrets and "GOOGLE_API_KEY" in st.secrets["general"]:
     google_api_key = str(st.secrets["general"]["GOOGLE_API_KEY"])
 
 if google_api_key:
-    # Clean the key from whitespaces or literal quotes that might come from TOML pasting
+    # Clean key from literal quotes or spaces
     google_api_key = google_api_key.strip().strip('"').strip("'")
     genai.configure(api_key=google_api_key)
     st.session_state["api_key_configured"] = True
 else:
     st.session_state["api_key_configured"] = False
-    st.warning("⚠️ GOOGLE_API_KEY no encontrada. Comprueba tus Secrets en Streamlit Cloud.")
 
-def debug_list_models():
-    """Debug function to list available models for the configured key"""
+# Helper for AI Report
+def get_ai_analysis(import_id, summary_stats, opportunities_sample):
+    """Generates or retrieves AI report from DB"""
     if not st.session_state.get("api_key_configured"):
-        return ["Error: Key not configured"]
+        return "⚠️ Configura una API Key válida para habilitar el reporte de IA."
+    
     try:
-        models = [m.name for m in genai.list_models()]
-        return models
-    except Exception as e:
-        return [f"Error listing models: {str(e)}"]
-
-def serialize_dataframe(df):
-    """Convert dataframe to string for AI context, limiting rows to save tokens"""
-    return df.head(50).to_string()
-
-def generate_ai_report(summary_stats, opportunities_sample):
-    """
-    Generates an executive report using Gemini-3-Flash-Preview.
-    """
-    # Use the same flexible detection logic
-    api_key = None
-    if "GOOGLE_API_KEY" in st.secrets:
-        api_key = st.secrets["GOOGLE_API_KEY"]
-    elif "general" in st.secrets and "GOOGLE_API_KEY" in st.secrets["general"]:
-        api_key = st.secrets["general"]["GOOGLE_API_KEY"]
-
-    if not api_key:
-        return "⚠️ Configura tu API Key en los Secrets de Streamlit para ver el reporte de IA."
-
-    try:
-        model = genai.GenerativeModel('gemini-3-flash-preview')
+        # Try both preview and stable models as fallback
+        models = ['gemini-2.0-flash-exp', 'gemini-1.5-flash']
+        selected_model = None
+        
+        # Check available models via diagnostic
+        try:
+            available = [m.name for m in genai.list_models()]
+            for m in models:
+                if any(m in a for a in available):
+                    selected_model = m
+                    break
+        except:
+            selected_model = 'gemini-1.5-flash' # Default fallback
+            
+        model = genai.GenerativeModel(selected_model or 'gemini-1.5-flash')
         
         prompt = f"""
         Actúa como un Consultor SEO Senior. Analiza los siguientes datos resumidos de un sitio web y genera un reporte ejecutivo en Español.
@@ -64,7 +60,7 @@ def generate_ai_report(summary_stats, opportunities_sample):
         ## Datos del Proyecto
         {summary_stats}
         
-        ## Oportunidades Detectadas (Muestra de Quick Wins, Posición 4-10)
+        ## Muestra de Oportunidades (Posición 4-10)
         {opportunities_sample}
         
         ## Instrucciones
@@ -75,139 +71,172 @@ def generate_ai_report(summary_stats, opportunities_sample):
         Sé breve, directo y profesional. Usa formato Markdown.
         """
         
-        with st.spinner('🤖 Generando análisis con Inteligencia Artificial...'):
+        with st.spinner('🤖 Generando análisis estratégico...'):
             response = model.generate_content(prompt)
-            return response.text
+            report_text = response.text
+            # Save to DB
+            database.update_report_text(import_id, report_text)
+            return report_text
     except Exception as e:
-        return f"Error generando reporte: {str(e)}"
+        return f"Error en IA: {str(e)}"
 
-# Sidebar
+# --- SIDEBAR & NAVIGATION ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/270/270798.png", width=50)
-    st.title("SEO Dashboard")
+    st.title("SEO Intelligence")
     
-    uploaded_file = st.file_uploader("Subir CSV mensual", type=['csv'])
+    # Check for Shared View via URL Params
+    params = st.query_params
+    shared_import_id = params.get("import_id")
     
-    st.markdown("---")
-    st.markdown("### Configuración")
-    
-    # Debug Section
-    debug_mode = st.checkbox("Modo Debug")
-    if debug_mode:
-        st.write("---")
-        st.write("🔍 **Diagnóstico de API**")
-        models = debug_list_models()
-        st.write("Modelos disponibles:")
-        st.json(models)
-        st.write(f"Clave configurada: {'SÍ' if st.session_state.get('api_key_configured') else 'NO'}")
-
-# Main App
-if uploaded_file is not None:
-    # 1. Process Data
-    ret, err = etl.parse_csv_data(uploaded_file)
-    
-    if err:
-        st.error(err)
+    if shared_import_id:
+        st.info("🔗 Vista de Compartida (Lectura)")
+        mode = "shared"
+        current_import_id = int(shared_import_id)
     else:
-        df = ret['df']
-        domain_map = ret['domains']
+        st.markdown("### Gestión de Proyectos")
+        mode = "admin"
         
-        # Domain Selector
-        domains_found = list(domain_map.keys())
-        if not domains_found:
-            st.error("No se detectaron dominios en el CSV (buscamos columnas como 'Visibilidad [dominio.com]').")
+        # Project Selection
+        projects_df = database.get_projects()
+        if projects_df.empty:
+            st.warning("No hay proyectos. Crea uno nuevo:")
+            new_p_name = st.text_input("Nombre del Proyecto (ej. Mi Cliente)")
+            new_p_domain = st.text_input("Dominio Principal (ej. dominio.com)")
+            if st.button("Crear Proyecto"):
+                if new_p_name and new_p_domain:
+                    database.save_project(new_p_name, new_p_domain)
+                    st.rerun()
+            st.stop()
+        
+        selected_p_row = st.selectbox("Seleccionar Proyecto", projects_df.to_dict('records'), format_func=lambda x: x['name'])
+        project_id = selected_p_row['id']
+        main_domain = selected_p_row['main_domain']
+        
+        st.markdown("---")
+        
+        # Import Selection
+        imports_df = database.get_project_imports(project_id)
+        if not imports_df.empty:
+            selected_import_row = st.selectbox("Mes de Análisis", imports_df.to_dict('records'), format_func=lambda x: f"{x['month']} ({x['filename']})")
+            current_import_id = selected_import_row['id']
+            stored_report = selected_import_row['report_text']
         else:
-            selected_domain = st.sidebar.selectbox("Dominio Principal", domains_found)
+            st.info("No hay datos cargados para este proyecto.")
+            current_import_id = None
+            stored_report = None
             
-            # --- CALCULATE METRICS ---
-            
-            # 1. Share of Voice
-            sov_df = etl.calculate_sov(df, domain_map, selected_domain)
-            main_sov = sov_df[sov_df['domain'] == selected_domain]['sov'].values[0] if not sov_df.empty else 0
-            
-            # 2. Striking Distance
-            opportunities = etl.get_striking_distance(df, domain_map, selected_domain)
-            quick_wins_count = len(opportunities)
-            
-            # 3. Top Keywords
-            pos_col = domain_map[selected_domain].get('position')
-            top_3 = len(df[df[pos_col] <= 3]) if pos_col else 0
-            top_10 = len(df[(df[pos_col] <= 10)]) if pos_col else 0
-            
-            # --- AI REPORT GENERATION ---
-            # Create a simplified state key based on filename
-            file_key = f"report_{uploaded_file.name}_{selected_domain}"
-            
-            if file_key not in st.session_state:
-                stats_str = f"""
-                - Dominio Analizado: {selected_domain}
-                - Share of Voice Actual: {main_sov:.2f}%
-                - Keywords en Top 3: {top_3}
-                - Keywords en Top 10: {top_10}
-                - Oportunidades (Quick Wins): {quick_wins_count}
-                - Competidores principales: {', '.join(sov_df.head(3)['domain'].tolist())}
-                """
-                
-                opps_str = opportunities.head(10).to_string(index=False)
-                
-                st.session_state[file_key] = generate_ai_report(stats_str, opps_str)
-            
-            # --- UI TABS ---
-            st.title(f"Reporte SEO: {selected_domain}")
-            
-            tab1, tab2, tab3 = st.tabs(["📊 Resumen Ejecutivo", "⚔️ Competencia", "🚀 Oportunidades"])
-            
-            with tab1:
-                # AI Report Section
-                st.subheader("💡 Análisis Inteligente (Gemini)")
-                st.info(st.session_state[file_key], icon="🤖")
-                
-                st.markdown("### KPIs Principales")
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Share of Voice", f"{main_sov:.1f}%")
-                col2.metric("Top 3 Keywords", top_3)
-                col3.metric("Top 10 Keywords", top_10)
-                col4.metric("Quick Wins", quick_wins_count)
-                
-                # Charts
-                st.markdown("### Distribución de Rankings")
-                if pos_col:
-                    # Create buckets
-                    def get_bucket(p):
-                        if p <= 3: return "Top 3"
-                        if p <= 10: return "4-10"
-                        if p <= 20: return "11-20"
-                        if p <= 100: return "20+"
-                        return "Not Ranked"
-                    
-                    df['bucket'] = df[pos_col].apply(get_bucket)
-                    bucket_counts = df['bucket'].value_counts().reset_index()
-                    bucket_counts.columns = ['Rango', 'Cantidad']
-                    
-                    fig = px.bar(bucket_counts, x='Rango', y='Cantidad', title="Distribución de Posiciones", color='Rango')
-                    st.plotly_chart(fig, use_container_width=True)
+        # Upload Section
+        st.markdown("### 🔝 Subir Nuevo Mes")
+        with st.expander("Subir CSV"):
+            new_month = st.date_input("Mes de los datos", value=datetime.now()).strftime("%Y-%m")
+            uploaded_file = st.file_uploader("CSV de Semrush/Sistrix", type=['csv'])
+            if uploaded_file and st.button("Procesar y Guardar"):
+                ret, err = etl.parse_csv_data(uploaded_file)
+                if err:
+                    st.error(err)
+                else:
+                    success = database.save_import_data(project_id, new_month, uploaded_file.name, ret['df'], ret['domains'])
+                    if success:
+                        st.success("¡Datos guardados!")
+                        st.rerun()
+                    else:
+                        st.error("Error al guardar en BD.")
 
-            with tab2:
-                st.subheader("Comparativa de Mercado")
-                st.markdown("Rankeados por Share of Voice (Visibilidad Total)")
-                st.dataframe(sov_df, use_container_width=True)
-                
-                # Chart
-                fig_sov = px.pie(sov_df, values='sov', names='domain', title='Share of Voice Market Split')
-                st.plotly_chart(fig_sov, use_container_width=True)
+        # Shared Link
+        if current_import_id:
+            st.markdown("---")
+            share_url = f"https://{st.query_params.get('host', 'tu-app.streamlit.app')}/?import_id={current_import_id}"
+            st.text_input("Enlace para compartir (Lectura)", share_url)
 
-            with tab3:
-                st.subheader(f"💎 Oportunidades de Alto Impacto ({quick_wins_count})")
-                st.markdown("Keywords posicionadas entre 4 y 10. Optimizarlas suele traer el mayor retorno a corto plazo.")
-                st.dataframe(opportunities, use_container_width=True)
+# --- MAIN DASHBOARD ---
+if 'current_import_id' in locals() and current_import_id:
+    df, domain_map = database.load_import_data(current_import_id)
+    
+    if df.empty:
+        st.error("No se pudieron cargar los datos del mes seleccionado.")
+    else:
+        # Filter for selected project domain
+        # In this persistent version, we use the domain stored in the project
+        selected_domain = main_domain if mode == "admin" else list(domain_map.keys())[0]
+        
+        # Metrics Calculation
+        sov_df = etl.calculate_sov(df, domain_map, selected_domain)
+        main_sov = sov_df[sov_df['domain'] == selected_domain]['sov'].values[0] if not sov_df.empty else 0
+        opportunities = etl.get_striking_distance(df, domain_map, selected_domain)
+        
+        pos_col = domain_map.get(selected_domain, {}).get('position')
+        top_3 = len(df[df[pos_col] <= 3]) if pos_col else 0
+        top_10 = len(df[df[pos_col] <= 10]) if pos_col else 0
+        
+        # Advanced Metrics Totals
+        total_clics = df[f'clics_{selected_domain}'].sum() if f'clics_{selected_domain}' in df.columns else 0
+        total_media_value = df[f'media_value_{selected_domain}'].sum() if f'media_value_{selected_domain}' in df.columns else 0
+
+        # AI Report Logic
+        report_display = stored_report
+        if not report_display:
+            stats_str = f"Dom: {selected_domain}, SoV: {main_sov:.2f}%, Top 10: {top_10}, Clics Est: {total_clics:.0f}, Media Value: ${total_media_value:.0f}"
+            opps_str = opportunities.head(10).to_string(index=False)
+            report_display = get_ai_analysis(current_import_id, stats_str, opps_str)
+
+        st.title(f"Dashboard SEO: {selected_domain}")
+        
+        t1, t2, t3, t4 = st.tabs(["📊 Resumen Ejecutivo", "⚔️ Competencia", "🚀 Oportunidades", "🧠 Inteligencia Avanzada"])
+        
+        with t1:
+            st.subheader("💡 Análisis Estratégico")
+            st.info(report_display, icon="🤖")
+            
+            st.markdown("### KPIs del Mes")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Share of Voice", f"{main_sov:.1f}%")
+            c2.metric("Clics Estimados", f"{total_clics:,.0f}")
+            c3.metric("Media Value", f"${total_media_value:,.0f}")
+            c4.metric("Quick Wins", len(opportunities))
+            
+            # Ranking Chart
+            st.markdown("---")
+            if pos_col:
+                def get_bucket(p):
+                    if p <= 3: return "Top 3"
+                    if p <= 10: return "4-10"
+                    if p <= 20: return "11-20"
+                    return "20+"
+                df['bucket'] = df[pos_col].apply(get_bucket)
+                fig = px.bar(df['bucket'].value_counts().reset_index(), x='index', y='bucket', labels={'index':'Rango', 'bucket':'Keywords'}, title="Distribución de Rankings")
+                st.plotly_chart(fig, use_container_width=True)
+
+        with t2:
+            st.subheader("Benchmark de Mercado")
+            st.dataframe(sov_df, use_container_width=True)
+            fig_pie = px.pie(sov_df, values='sov', names='domain', title="Market Share (Visibilidad)")
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        with t3:
+            st.subheader("💎 Striking Distance (Pos. 4-10)")
+            st.markdown("Keywords con alto potencial de conversión si suben al Top 3.")
+            st.dataframe(opportunities[['keyword', 'volume', 'difficulty', 'intent', pos_col]], use_container_width=True)
+
+        with t4:
+            st.subheader("🎯 Análisis de Valor y Canibalización")
+            col_a, col_b = st.columns(2)
+            
+            with col_a:
+                st.markdown("#### Keywords de Mayor Valor ($)")
+                mv_df = df.sort_values(f'media_value_{selected_domain}', ascending=False).head(10)
+                st.dataframe(mv_df[['keyword', 'volume', 'cpc', f'media_value_{selected_domain}']], use_container_width=True)
+            
+            with col_b:
+                st.markdown("#### Segmentación Branded vs Original")
+                brand_stats = df.groupby('is_branded').agg({f'clics_{selected_domain}': 'sum', 'keyword': 'count'}).reset_index()
+                fig_brand = px.bar(brand_stats, x='is_branded', y=f'clics_{selected_domain}', title="Tráfico Marca vs Genérico")
+                st.plotly_chart(fig_brand, use_container_width=True)
 
 else:
-    st.info("👆 Sube un archivo CSV data comenzar. Usa el panel de la izquierda.")
-    st.markdown("""
-    ### Formato esperado del CSV
-    El archivo debe contener columnas estándar de herramientas SEO (como Semrush/Ahrefs/Sistrix):
-    - `Palabra clave`
-    - `Volumen`
-    - `Visibilidad [midominio.com]` (para detección automática)
-    - `Posición [midominio.com]`
-    """)
+    st.info("👋 Bienvenido. Selecciona un proyecto y un mes en la barra lateral para comenzar.")
+    if st.session_state.get("api_key_configured"):
+        st.success("✅ IA Configurada y lista.")
+    else:
+        st.warning("⚠️ IA Deshabilitada (Falta API Key).")
+

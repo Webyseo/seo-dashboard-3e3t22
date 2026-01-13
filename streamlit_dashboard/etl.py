@@ -118,7 +118,40 @@ def parse_csv_data(file):
     found_cpc = next((c for c in cpc_variants if c in df.columns), None)
     df['cpc'] = df[found_cpc].apply(normalize_currency) if found_cpc else 0.0
 
+    # --- Advanced Metrics: CTR & Media Value ---
+    def get_ctr(pos):
+        if pos == 1: return 0.30
+        if pos == 2: return 0.15
+        if pos == 3: return 0.10
+        if pos == 4: return 0.07
+        if pos == 5: return 0.05
+        if pos == 6: return 0.04
+        if pos == 7: return 0.03
+        if pos == 8: return 0.02
+        if pos == 9: return 0.015
+        if pos == 10: return 0.01
+        if 10 < pos <= 20: return 0.005
+        return 0
+
     # --- End Robust Detection ---
+
+    # Process per-domain data and add specific SEO intelligence
+    for domain, mapping in domain_map.items():
+        pos_col = mapping.get('position')
+        if pos_col:
+            # 1. Estimated Clicks
+            df[f'clics_{domain}'] = df.apply(
+                lambda x: x['volume'] * get_ctr(x[pos_col]) if pd.notnull(x[pos_col]) else 0, 
+                axis=1
+            )
+            # 2. Media Value (Estimated cost if paid in Ads)
+            df[f'media_value_{domain}'] = df[f'clics_{domain}'] * df['cpc']
+
+    # --- Canibalización Detection ---
+    # We look for keywords where the same domain has multiple entries (not common in single exports but good for audit)
+    # Since most exports are 1 row per keyword, we'll check if URL is present (not yet implemented in basic ETL)
+    # For now, let's ensure we have a 'is_branded' flag if domain name is in keyword
+    df['is_branded'] = df.apply(lambda x: any(d.split('.')[0].lower() in x['keyword'].lower() for d in domain_map.keys()), axis=1)
 
     # Process per-domain data
     # We will create a simplified structure or just keep the DF clean
