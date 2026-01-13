@@ -146,8 +146,19 @@ with st.sidebar:
         # Shared Link
         if current_import_id:
             st.markdown("---")
-            share_url = f"https://{st.query_params.get('host', 'tu-app.streamlit.app')}/?import_id={current_import_id}"
-            st.text_input("Enlace para compartir (Lectura)", share_url)
+            # Try to get host automatically
+            share_url = f"https://seo-dashboard-3e3t22.streamlit.app/?import_id={current_import_id}"
+            st.text_input("🔗 Enlace para compartir (Lectura)", share_url)
+            
+        st.markdown("---")
+        with st.expander("📚 Glosario Ejecutivo"):
+            st.markdown("""
+            - **Share of Voice (SoV)**: Tu cuota de visibilidad en el mercado frente a competidores.
+            - **Clics Estimados**: Tráfico probable basado en volumen y posición (CTR).
+            - **Media Value**: Cuánto te ahorrarías en Google Ads por este tráfico orgánico.
+            - **Striking Distance**: Keywords en pos. 4-10. Fáciles de subir al Top 3.
+            - **Quick Wins**: Oportunidades de alto volumen y baja dificultad.
+            """)
 
 # --- MAIN DASHBOARD ---
 if 'current_import_id' in locals() and current_import_id:
@@ -180,6 +191,27 @@ if 'current_import_id' in locals() and current_import_id:
             opps_str = opportunities.head(10).to_string(index=False)
             report_display = get_ai_analysis(current_import_id, stats_str, opps_str)
 
+        # --- MoM TREND CALCULATION ---
+        prev_month_id = None
+        current_idx = imports_df[imports_df['id'] == current_import_id].index[0]
+        if current_idx + 1 < len(imports_df):
+            prev_month_id = imports_df.iloc[current_idx + 1]['id']
+        
+        delta_sov = None
+        delta_clics = None
+        
+        if prev_month_id:
+            df_prev, domain_map_prev = database.load_import_data(prev_month_id)
+            if not df_prev.empty:
+                # Calculate previous SoV
+                sov_df_prev = etl.calculate_sov(df_prev, domain_map_prev, selected_domain)
+                prev_sov = sov_df_prev[sov_df_prev['domain'] == selected_domain]['sov'].values[0] if not sov_df_prev.empty else 0
+                delta_sov = main_sov - prev_sov
+                
+                # Calculate previous Clics
+                prev_clics = df_prev[f'clics_{selected_domain}'].sum() if f'clics_{selected_domain}' in df_prev.columns else 0
+                delta_clics = total_clics - prev_clics
+
         st.title(f"Dashboard SEO: {selected_domain}")
         
         t1, t2, t3, t4 = st.tabs(["📊 Resumen Ejecutivo", "⚔️ Competencia", "🚀 Oportunidades", "🧠 Inteligencia Avanzada"])
@@ -190,8 +222,8 @@ if 'current_import_id' in locals() and current_import_id:
             
             st.markdown("### KPIs del Mes")
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Share of Voice", f"{main_sov:.1f}%")
-            c2.metric("Clics Estimados", f"{total_clics:,.0f}")
+            c1.metric("Share of Voice", f"{main_sov:.1f}%", delta=f"{delta_sov:+.1f}%" if delta_sov is not None else None)
+            c2.metric("Clics Estimados", f"{total_clics:,.0f}", delta=f"{delta_clics:+,.0f}" if delta_clics is not None else None)
             c3.metric("Media Value", f"${total_media_value:,.0f}")
             c4.metric("Quick Wins", len(opportunities))
             
