@@ -32,7 +32,7 @@ else:
     st.session_state["api_key_configured"] = False
 
 # Helper for AI Report
-def get_ai_analysis(import_id, summary_stats, opportunities_sample):
+def get_ai_analysis(import_id, summary_stats, opportunities_sample, analysis_month):
     """Generates or retrieves AI report from DB"""
     if not st.session_state.get("api_key_configured"):
         return "⚠️ Configura una API Key válida para habilitar el reporte de IA."
@@ -55,7 +55,11 @@ def get_ai_analysis(import_id, summary_stats, opportunities_sample):
         model = genai.GenerativeModel(selected_model or 'gemini-1.5-flash')
         
         prompt = f"""
-        Actúa como un Consultor SEO Senior. Analiza los siguientes datos resumidos de un sitio web y genera un reporte ejecutivo en Español.
+        Actúa como un Consultor SEO Senior. Analiza los siguientes datos de un sitio web para el mes de {analysis_month} y genera un reporte ejecutivo en Español.
+        
+        ## IMPORTANTE: Fecha del Reporte
+        Mes de análisis: {analysis_month}
+        Asegúrate de incluir esta fecha correctamente al inicio del reporte.
         
         ## Datos del Proyecto
         {summary_stats}
@@ -93,6 +97,7 @@ with st.sidebar:
         st.info("🔗 Vista de Compartida (Lectura)")
         mode = "shared"
         current_import_id = int(shared_import_id)
+        current_view = "monthly"
     else:
         st.markdown("### Gestión de Proyectos")
         mode = "admin"
@@ -118,11 +123,24 @@ with st.sidebar:
         # Import Selection
         imports_df = database.get_project_imports(project_id)
         if not imports_df.empty:
-            selected_import_row = st.selectbox("Mes de Análisis", imports_df.to_dict('records'), format_func=lambda x: f"{x['month']} ({x['filename']})")
-            current_import_id = selected_import_row['id']
-            stored_report = selected_import_row['report_text']
+            # Add "Reporte Global" option
+            options = ["📊 Resumen Global"] + [f"📅 {row['month']} ({row['filename']})" for _, row in imports_df.iterrows()]
+            selected_option = st.selectbox("Vista de Datos", options)
+            
+            if selected_option == "📊 Resumen Global":
+                current_view = "global"
+                current_import_id = None
+                stored_report = None
+            else:
+                current_view = "monthly"
+                # Extract month/filename to find ID
+                month_text = selected_option.replace("📅 ", "").split(" (")[0]
+                selected_import_row = imports_df[imports_df['month'] == month_text].iloc[0]
+                current_import_id = selected_import_row['id']
+                stored_report = selected_import_row['report_text']
         else:
             st.info("No hay datos cargados para este proyecto.")
+            current_view = "empty"
             current_import_id = None
             stored_report = None
             
@@ -161,15 +179,68 @@ with st.sidebar:
             """)
 
 # --- MAIN DASHBOARD ---
-if 'current_import_id' in locals() and current_import_id:
+if current_view == "global":
+    st.title(f"🌍 Reporte Global: {main_domain}")
+    st.markdown("Comparativa histórica de todos los datos cargados para este proyecto.")
+    
+    all_imports = database.get_project_imports(project_id)
+    
+    history_data = []
+    # Progress bar for loading historical data
+    progress_bar = st.progress(0)
+    for i, (_, imp) in enumerate(all_imports.iterrows()):
+        df_month, d_map = database.load_import_data(imp['id'])
+        if not df_month.empty:
+            sov_df = etl.calculate_sov(df_month, d_map, main_domain)
+            sov = sov_df[sov_df['domain'] == main_domain]['sov'].values[0] if not sov_df.empty else 0
+            history_data.append({
+                'Mes': imp['month'],
+                'Cuota de Mercado (%)': sov,
+                'Clics Estimados': df_month[f'clics_{main_domain}'].sum() if f'clics_{main_domain}' in df_month.columns else 0,
+                'Ahorro Estimado': df_month[f'media_value_{main_domain}'].sum() if f'media_value_{main_domain}' in df_month.columns else 0
+            })
+        progress_bar.progress((i + 1) / len(all_imports))
+    progress_bar.empty()
+    
+    if history_data:
+        h_df = pd.DataFrame(history_data).sort_values('Mes')
+        
+        # Overall Summary Cards (Aggregated)
+        st.markdown("### Resumen Acumulado")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Cuota de Mercado Media", f"{h_df['Cuota de Mercado (%)'].mean():.1f}%")
+        c2.metric("Total Clics Acumulados", f"{h_df['Clics Estimados'].sum():,.0f}")
+        c3.metric("Total Ahorro Acumulado", f"${h_df['Ahorro Estimado'].sum():,.0f}")
+        
+        # Trend Chart
+        st.markdown("---")
+        st.markdown("### 📈 Evolución de KPIs")
+        # Dual axis or two charts
+        fig_sov = px.line(h_df, x='Mes', y='Cuota de Mercado (%)', title="Tendencia de Cuota de Mercado (%)", markers=True)
+        st.plotly_chart(fig_sov, use_container_width=True)
+        
+        fig_clics = px.area(h_df, x='Mes', y='Clics Estimados', title="Evolución de Tráfico (Clics Estimados)", markers=True)
+        st.plotly_chart(fig_clics, use_container_width=True)
+        
+        st.subheader("📋 Tabla de Datos Históricos")
+        st.dataframe(h_df.rename(columns={
+            'Mes': 'Periodo',
+            'Cuota de Mercado (%)': '% Visibilidad',
+            'Clics Estimados': 'Tráfico Est.',
+            'Ahorro Estimado': 'Valor Media ($)'
+        }), use_container_width=True)
+    else:
+        st.info("Sube más datos mensuales para desbloquear la vista histórica.")
+
+elif current_view == "monthly" and current_import_id:
     df, domain_map = database.load_import_data(current_import_id)
+    analysis_month = selected_import_row['month'] if 'selected_import_row' in locals() else "Análisis Reciente"
     
     if df.empty:
         st.error("No se pudieron cargar los datos del mes seleccionado.")
     else:
         # Filter for selected project domain
-        # In this persistent version, we use the domain stored in the project
-        selected_domain = main_domain if mode == "admin" else list(domain_map.keys())[0]
+        selected_domain = main_domain
         
         # Metrics Calculation
         sov_df = etl.calculate_sov(df, domain_map, selected_domain)
@@ -177,7 +248,6 @@ if 'current_import_id' in locals() and current_import_id:
         opportunities = etl.get_striking_distance(df, domain_map, selected_domain)
         
         pos_col = domain_map.get(selected_domain, {}).get('position')
-        top_3 = len(df[df[pos_col] <= 3]) if pos_col else 0
         top_10 = len(df[df[pos_col] <= 10]) if pos_col else 0
         
         # Advanced Metrics Totals
@@ -189,13 +259,14 @@ if 'current_import_id' in locals() and current_import_id:
         if not report_display:
             stats_str = f"Dom: {selected_domain}, SoV: {main_sov:.2f}%, Top 10: {top_10}, Clics Est: {total_clics:.0f}, Media Value: ${total_media_value:.0f}"
             opps_str = opportunities.head(10).to_string(index=False)
-            report_display = get_ai_analysis(current_import_id, stats_str, opps_str)
+            report_display = get_ai_analysis(current_import_id, stats_str, opps_str, analysis_month)
 
         # --- MoM TREND CALCULATION ---
         prev_month_id = None
-        current_idx = imports_df[imports_df['id'] == current_import_id].index[0]
-        if current_idx + 1 < len(imports_df):
-            prev_month_id = imports_df.iloc[current_idx + 1]['id']
+        imports_list = database.get_project_imports(project_id)
+        current_idx = imports_list[imports_list['id'] == current_import_id].index[0]
+        if current_idx + 1 < len(imports_list):
+            prev_month_id = imports_list.iloc[current_idx + 1]['id']
         
         delta_sov = None
         delta_clics = None
@@ -203,16 +274,14 @@ if 'current_import_id' in locals() and current_import_id:
         if prev_month_id:
             df_prev, domain_map_prev = database.load_import_data(prev_month_id)
             if not df_prev.empty:
-                # Calculate previous SoV
                 sov_df_prev = etl.calculate_sov(df_prev, domain_map_prev, selected_domain)
                 prev_sov = sov_df_prev[sov_df_prev['domain'] == selected_domain]['sov'].values[0] if not sov_df_prev.empty else 0
                 delta_sov = main_sov - prev_sov
-                
-                # Calculate previous Clics
                 prev_clics = df_prev[f'clics_{selected_domain}'].sum() if f'clics_{selected_domain}' in df_prev.columns else 0
                 delta_clics = total_clics - prev_clics
 
         st.title(f"Dashboard SEO: {selected_domain}")
+        st.caption(f"📅 Mes de Análisis: {analysis_month}")
         
         t1, t2, t3, t4 = st.tabs(["📊 Resumen Ejecutivo", "⚔️ Competencia", "🚀 Oportunidades", "🧠 Inteligencia Avanzada"])
         
