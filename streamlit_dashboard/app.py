@@ -260,29 +260,69 @@ if 'current_import_id' in locals() and current_import_id:
                 st.plotly_chart(fig, use_container_width=True)
 
         with t2:
-            st.subheader("Benchmark de Mercado")
-            st.dataframe(sov_df, use_container_width=True)
-            fig_pie = px.pie(sov_df, values='sov', names='domain', title="Market Share (Visibilidad)")
+            st.subheader("📊 Comparativa de Mercado")
+            # Rename for display
+            sov_display = sov_df.rename(columns={
+                'domain': 'Competidores',
+                'visibility_score': 'Puntuación de Visibilidad',
+                'sov': '% Cuota de Mercado'
+            })
+            st.dataframe(sov_display, use_container_width=True)
+            
+            fig_pie = px.pie(
+                sov_df, 
+                values='sov', 
+                names='domain', 
+                title="Reparto de Cuota de Mercado (Visibilidad)",
+                labels={'domain': 'Dominio', 'sov': 'Cuota (%)'}
+            )
             st.plotly_chart(fig_pie, use_container_width=True)
 
         with t3:
-            st.subheader("💎 Striking Distance (Pos. 4-10)")
-            st.markdown("Keywords con alto potencial de conversión si suben al Top 3.")
-            st.dataframe(opportunities[['keyword', 'volume', 'difficulty', 'intent', pos_col]], use_container_width=True)
+            st.subheader("🎯 Oportunidades de Crecimiento Rápido")
+            st.markdown("Keywords que ya están en primera página (pos. 4-10) y que con poco esfuerzo pueden subir al Top 3 e impulsar el tráfico.")
+            
+            opps_display = opportunities.rename(columns={
+                'keyword': 'Palabra Clave',
+                'volume': 'Búsquedas Mensuales',
+                'difficulty': 'Dificultad (0-100)',
+                'intent': 'Intención de Búsqueda',
+                pos_col: 'Nuestra Posición Actual'
+            })
+            st.dataframe(opps_display, use_container_width=True)
 
         with t4:
-            st.subheader("🎯 Análisis de Valor y Canibalización")
+            st.subheader("🧠 Inteligencia de Valor y Marca")
             col_a, col_b = st.columns(2)
             
             with col_a:
-                st.markdown("#### Keywords de Mayor Valor ($)")
-                mv_df = df.sort_values(f'media_value_{selected_domain}', ascending=False).head(10)
-                st.dataframe(mv_df[['keyword', 'volume', 'cpc', f'media_value_{selected_domain}']], use_container_width=True)
+                st.markdown("#### 💰 Keywords con mayor Ahorro Estimado")
+                st.caption("Palabras que te están ahorrando dinero en publicidad (Google Ads).")
+                mv_df = df.sort_values(f'media_value_{selected_domain}', ascending=False).head(15).copy()
+                mv_display = mv_df.rename(columns={
+                    'keyword': 'Palabra Clave',
+                    'volume': 'Búsquedas',
+                    'cpc': 'Coste Clic (Ads)',
+                    f'media_value_{selected_domain}': 'Ahorro Estimado'
+                })
+                st.dataframe(mv_display[['Palabra Clave', 'Búsquedas', 'Coste Clic (Ads)', 'Ahorro Estimado']], use_container_width=True)
             
             with col_b:
-                st.markdown("#### Segmentación Branded vs Original")
+                st.markdown("#### 🏷️ Tráfico: Marca vs. Genérico")
+                st.caption("Diferencia entre personas que ya te conocen (Marca) vs. nuevos clientes (Genérico).")
+                
                 brand_stats = df.groupby('is_branded').agg({f'clics_{selected_domain}': 'sum', 'keyword': 'count'}).reset_index()
-                fig_brand = px.bar(brand_stats, x='is_branded', y=f'clics_{selected_domain}', title="Tráfico Marca vs Genérico")
+                brand_stats['is_branded'] = brand_stats['is_branded'].map({True: 'Búsquedas de Marca', False: 'Búsquedas Genéricas'})
+                
+                fig_brand = px.bar(
+                    brand_stats, 
+                    x='is_branded', 
+                    y=f'clics_{selected_domain}', 
+                    title="Distribución de Tráfico Mensual",
+                    labels={'is_branded': 'Tipo de Palabra Clave', f'clics_{selected_domain}': 'Clics Estimados'},
+                    color='is_branded',
+                    color_discrete_sequence=['#1E88E5', '#D81B60']
+                )
                 st.plotly_chart(fig_brand, use_container_width=True)
 
 else:
