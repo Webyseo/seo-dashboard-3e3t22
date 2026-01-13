@@ -14,17 +14,26 @@ st.set_page_config(
 # Initialize AI
 google_api_key = None
 if "GOOGLE_API_KEY" in st.secrets:
-    google_api_key = st.secrets["GOOGLE_API_KEY"]
+    google_api_key = str(st.secrets["GOOGLE_API_KEY"])
 elif "general" in st.secrets and "GOOGLE_API_KEY" in st.secrets["general"]:
-    google_api_key = st.secrets["general"]["GOOGLE_API_KEY"]
+    google_api_key = str(st.secrets["general"]["GOOGLE_API_KEY"])
 
 if google_api_key:
     genai.configure(api_key=google_api_key)
-    # Store for further use
     st.session_state["api_key_configured"] = True
 else:
     st.session_state["api_key_configured"] = False
     st.warning("⚠️ GOOGLE_API_KEY no encontrada. Comprueba tus Secrets en Streamlit Cloud.")
+
+def debug_list_models():
+    """Debug function to list available models for the configured key"""
+    if not st.session_state.get("api_key_configured"):
+        return ["Error: Key not configured"]
+    try:
+        models = [m.name for m in genai.list_models()]
+        return models
+    except Exception as e:
+        return [f"Error listing models: {str(e)}"]
 
 def serialize_dataframe(df):
     """Convert dataframe to string for AI context, limiting rows to save tokens"""
@@ -79,7 +88,16 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### Configuración")
-    # Placeholder for domain selection if needed after upload
+    
+    # Debug Section
+    debug_mode = st.checkbox("Modo Debug")
+    if debug_mode:
+        st.write("---")
+        st.write("🔍 **Diagnóstico de API**")
+        models = debug_list_models()
+        st.write("Modelos disponibles:")
+        st.json(models)
+        st.write(f"Clave configurada: {'SÍ' if st.session_state.get('api_key_configured') else 'NO'}")
 
 # Main App
 if uploaded_file is not None:
