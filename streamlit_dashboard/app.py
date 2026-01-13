@@ -217,11 +217,28 @@ if current_view == "global":
         # Trend Chart
         st.markdown("---")
         st.markdown("### 📈 Evolución de KPIs")
-        # Dual axis or two charts
-        fig_sov = px.line(h_df, x='Mes', y='Cuota de Mercado (%)', title="Tendencia de Cuota de Mercado (%)", markers=True)
+        
+        # We ensure Mes is treated as category to avoid plotly daily interpolation
+        fig_sov = px.line(
+            h_df, 
+            x='Mes', 
+            y='Cuota de Mercado (%)', 
+            title="Tendencia de Cuota de Mercado (%)", 
+            markers=True,
+            labels={'Mes': 'Periodo'}
+        )
+        fig_sov.update_xaxes(type='category')
         st.plotly_chart(fig_sov, use_container_width=True)
         
-        fig_clics = px.area(h_df, x='Mes', y='Clics Estimados', title="Evolución de Tráfico (Clics Estimados)", markers=True)
+        fig_clics = px.area(
+            h_df, 
+            x='Mes', 
+            y='Clics Estimados', 
+            title="Evolución de Tráfico (Clics Estimados)", 
+            markers=True,
+            labels={'Mes': 'Periodo'}
+        )
+        fig_clics.update_xaxes(type='category')
         st.plotly_chart(fig_clics, use_container_width=True)
         
         st.subheader("📋 Tabla de Datos Históricos")
@@ -230,7 +247,7 @@ if current_view == "global":
             'Cuota de Mercado (%)': '% Visibilidad',
             'Clics Estimados': 'Tráfico Est.',
             'Ahorro Estimado': 'Valor Media ($)'
-        }), use_container_width=True)
+        }), use_container_width=True, hide_index=True)
     else:
         st.info("Sube más datos mensuales para desbloquear la vista histórica.")
 
