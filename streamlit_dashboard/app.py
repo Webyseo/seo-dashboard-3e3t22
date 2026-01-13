@@ -55,22 +55,23 @@ def get_ai_analysis(import_id, summary_stats, opportunities_sample, analysis_mon
         model = genai.GenerativeModel(selected_model or 'gemini-1.5-flash')
         
         prompt = f"""
-        Actúa como un Consultor SEO Senior. Analiza los siguientes datos de un sitio web para el mes de {analysis_month} y genera un reporte ejecutivo en Español.
+        Actúa como un Consultor SEO Senior. Analiza los siguientes datos de un sitio web para el PERIODO EXCLUSIVO de {analysis_month} y genera un reporte ejecutivo en Español.
         
-        ## IMPORTANTE: Fecha del Reporte
-        Mes de análisis: {analysis_month}
-        Asegúrate de incluir esta fecha correctamente al inicio del reporte.
+        ## REGLA DE ORO DE LA FECHA
+        El periodo de análisis es: {analysis_month}
+        **IMPORTANTE**: NO inventes fechas. NO uses la fecha de hoy (ignore system date). 
+        El reporte DEBE comenzar con: # Informe Ejecutivo SEO - {analysis_month}
         
-        ## Datos del Proyecto
+        ## Datos del Proyecto ({analysis_month})
         {summary_stats}
         
-        ## Muestra de Oportunidades (Posición 4-10)
+        ## Muestra de Oportunidades
         {opportunities_sample}
         
-        ## Instrucciones
-        1. Resumen Ejecutivo: Estado actual y salud del proyecto.
-        2. Análisis de Competencia: Quien domina el mercado (Share of Voice).
-        3. Acciones Recomendadas: 3 balas con las acciones más críticas basadas en las oportunidades.
+        ## Instrucciones de Estructura
+        1. Resumen Ejecutivo: Estado actual y salud del proyecto en {analysis_month}.
+        2. Análisis de Competencia: Quien domina el mercado.
+        3. Acciones Recomendadas: 3 balas con las acciones más críticas.
         
         Sé breve, directo y profesional. Usa formato Markdown.
         """
@@ -356,6 +357,25 @@ elif current_view == "monthly" and current_import_id:
                     }
                 )
                 st.plotly_chart(fig, use_container_width=True)
+
+            # --- ZONA DE GESTIÓN ---
+            st.markdown("---")
+            with st.expander("⚙️ Zona de Gestión de Datos"):
+                st.warning("⚠️ Acciones delicadas: usa con precaución.")
+                col1, col2 = st.columns(2)
+                
+                if col1.button("🔄 Regenerar Análisis IA", help="Borra el reporte actual y genera uno nuevo con la fecha corregida."):
+                    database.update_report_text(current_import_id, None)
+                    st.success("Reporte borrado con éxito. Al refrescar, la IA generará un nuevo análisis con la fecha del CSV.")
+                    st.rerun()
+                
+                if col2.button("🗑️ Borrar este Mes", help="Elimina permanentemente los datos de este mes para que puedas volver a subirlos."):
+                    conn = database.get_connection()
+                    conn.execute("DELETE FROM imports WHERE id = ?", (current_import_id,))
+                    conn.commit()
+                    conn.close()
+                    st.warning(f"Mes {analysis_month} eliminado del sistema.")
+                    st.rerun()
 
         with t2:
             st.subheader("📊 Comparativa de Mercado")
