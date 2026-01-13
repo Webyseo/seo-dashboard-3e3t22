@@ -19,6 +19,8 @@ elif "general" in st.secrets and "GOOGLE_API_KEY" in st.secrets["general"]:
     google_api_key = str(st.secrets["general"]["GOOGLE_API_KEY"])
 
 if google_api_key:
+    # Clean the key from whitespaces or literal quotes that might come from TOML pasting
+    google_api_key = google_api_key.strip().strip('"').strip("'")
     genai.configure(api_key=google_api_key)
     st.session_state["api_key_configured"] = True
 else:
