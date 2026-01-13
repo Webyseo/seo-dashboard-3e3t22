@@ -118,8 +118,31 @@ def parse_csv_data(file):
     found_cpc = next((c for c in cpc_variants if c in df.columns), None)
     df['cpc'] = df[found_cpc].apply(normalize_currency) if found_cpc else 0.0
 
-    # --- Advanced Metrics: CTR & Media Value ---
+    # --- 1. Normalization Loop for Domains ---
+    for domain, mapping in domain_map.items():
+        if 'visibility' in mapping:
+            df[mapping['visibility']] = df[mapping['visibility']].apply(normalize_percent)
+        
+        if 'position' in mapping:
+            # function to handle ranking
+            def parse_pos(x):
+                if pd.isna(x): return 101 # Not ranked
+                x_str = str(x).lower().strip()
+                if x_str in ['no está', 'n/d', '-', '', 'none']: return 101
+                try:
+                    # Handle cases like "1,0" or "5.0"
+                    return int(float(str(x).replace(',', '.')))
+                except:
+                    return 101
+            df[mapping['position']] = df[mapping['position']].apply(parse_pos)
+
+    # --- 2. Advanced Metrics: CTR & Media Value ---
     def get_ctr(pos):
+        try:
+            pos = int(pos)
+        except:
+            return 0
+            
         if pos == 1: return 0.30
         if pos == 2: return 0.15
         if pos == 3: return 0.10
@@ -133,48 +156,18 @@ def parse_csv_data(file):
         if 10 < pos <= 20: return 0.005
         return 0
 
-    # --- End Robust Detection ---
-
-    # Process per-domain data and add specific SEO intelligence
     for domain, mapping in domain_map.items():
         pos_col = mapping.get('position')
         if pos_col:
-            # 1. Estimated Clicks
+            # Now x[pos_col] is guaranteed to be numeric (int 1-100 or 101)
             df[f'clics_{domain}'] = df.apply(
                 lambda x: x['volume'] * get_ctr(x[pos_col]) if pd.notnull(x[pos_col]) else 0, 
                 axis=1
             )
-            # 2. Media Value (Estimated cost if paid in Ads)
             df[f'media_value_{domain}'] = df[f'clics_{domain}'] * df['cpc']
 
-    # --- Canibalización Detection ---
-    # We look for keywords where the same domain has multiple entries (not common in single exports but good for audit)
-    # Since most exports are 1 row per keyword, we'll check if URL is present (not yet implemented in basic ETL)
-    # For now, let's ensure we have a 'is_branded' flag if domain name is in keyword
-    df['is_branded'] = df.apply(lambda x: any(d.split('.')[0].lower() in x['keyword'].lower() for d in domain_map.keys()), axis=1)
-
-    # Process per-domain data
-    # We will create a simplified structure or just keep the DF clean
-    # For the dashboard, we need a main domain. We'll pick the first one found or let user choose.
-    # For now, we clean the columns in place 
-    
-    for domain, mapping in domain_map.items():
-        if 'visibility' in mapping:
-            df[mapping['visibility']] = df[mapping['visibility']].apply(normalize_percent)
-            # Handle N/D in position (which might be text "No está...")
-            # If position is numeric 1-100.
-        
-        if 'position' in mapping:
-            # function to handle ranking
-            def parse_pos(x):
-                if pd.isna(x): return 101 # Not ranked
-                x_str = str(x).lower()
-                if 'no está' in x_str or 'n/d' in x_str or '-' == x_str.strip(): return 101
-                try:
-                    return int(float(str(x).replace(',', '.')))
-                except:
-                    return 101
-            df[mapping['position']] = df[mapping['position']].apply(parse_pos)
+    # --- 3. Branding Detection ---
+    df['is_branded'] = df.apply(lambda x: any(d.split('.')[0].lower() in str(x['keyword']).lower() for d in domain_map.keys()), axis=1)
 
     return {
         'df': df,
