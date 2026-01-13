@@ -123,8 +123,9 @@ with st.sidebar:
         # Import Selection
         imports_df = database.get_project_imports(project_id)
         if not imports_df.empty:
-            # Add "Reporte Global" option
-            options = ["📊 Resumen Global"] + [f"📅 {row['month']} ({row['filename']})" for _, row in imports_df.iterrows()]
+            # Convert to list for stable indexing
+            import_list = imports_df.to_dict('records')
+            options = ["📊 Resumen Global"] + [f"📅 {row['month']} ({row['filename']})" for row in import_list]
             selected_option = st.selectbox("Vista de Datos", options)
             
             if selected_option == "📊 Resumen Global":
@@ -133,11 +134,12 @@ with st.sidebar:
                 stored_report = None
             else:
                 current_view = "monthly"
-                # Extract month/filename to find ID
-                month_text = selected_option.replace("📅 ", "").split(" (")[0]
-                selected_import_row = imports_df[imports_df['month'] == month_text].iloc[0]
+                # Use index to find the correct ID (safe even with duplicate months)
+                idx = options.index(selected_option) - 1
+                selected_import_row = import_list[idx]
                 current_import_id = selected_import_row['id']
                 stored_report = selected_import_row['report_text']
+                analysis_month = selected_import_row['month']
         else:
             st.info("No hay datos cargados para este proyecto.")
             current_view = "empty"
@@ -237,7 +239,14 @@ elif current_view == "monthly" and current_import_id:
     analysis_month = selected_import_row['month'] if 'selected_import_row' in locals() else "Análisis Reciente"
     
     if df.empty:
-        st.error("No se pudieron cargar los datos del mes seleccionado.")
+        st.error(f"⚠️ No hay palabras clave guardadas para {analysis_month}.")
+        st.info("Esto puede ocurrir si la subida anterior falló o el archivo estaba vacío. Por favor, intenta subir el CSV de nuevo para este mes en la barra lateral.")
+        if st.button("Eliminar este registro vacío"):
+            conn = database.get_connection()
+            conn.execute("DELETE FROM imports WHERE id = ?", (current_import_id,))
+            conn.commit()
+            conn.close()
+            st.rerun()
     else:
         # Filter for selected project domain
         selected_domain = main_domain
@@ -274,14 +283,17 @@ elif current_view == "monthly" and current_import_id:
         if prev_month_id:
             df_prev, domain_map_prev = database.load_import_data(prev_month_id)
             if not df_prev.empty:
+                # Calculate previous SoV
                 sov_df_prev = etl.calculate_sov(df_prev, domain_map_prev, selected_domain)
                 prev_sov = sov_df_prev[sov_df_prev['domain'] == selected_domain]['sov'].values[0] if not sov_df_prev.empty else 0
                 delta_sov = main_sov - prev_sov
+                
+                # Calculate previous Clics
                 prev_clics = df_prev[f'clics_{selected_domain}'].sum() if f'clics_{selected_domain}' in df_prev.columns else 0
                 delta_clics = total_clics - prev_clics
 
         st.title(f"Dashboard SEO: {selected_domain}")
-        st.caption(f"📅 Mes de Análisis: {analysis_month}")
+        st.caption(f"📅 Mes de Análisis Seleccionado: {analysis_month}")
         
         t1, t2, t3, t4 = st.tabs(["📊 Resumen Ejecutivo", "⚔️ Competencia", "🚀 Oportunidades", "🧠 Inteligencia Avanzada"])
         

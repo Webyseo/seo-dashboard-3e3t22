@@ -34,10 +34,14 @@ def init_db():
         filename TEXT,
         report_text TEXT, -- Stores the AI generated report
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (project_id) REFERENCES projects (id),
-        UNIQUE(project_id, month)
+        FOREIGN KEY (project_id) REFERENCES projects (id)
     )
     """)
+    # Ensure UNIQUE constraint on project_id and month if table already exists
+    try:
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_project_month ON imports(project_id, month)")
+    except Exception as e:
+        print(f"Warning: Could not create unique index on imports table. It might already exist or there's an issue: {e}")
     
     # Keywords & Metrics table (Denormalized for performance in this MVP)
     cursor.execute("""
@@ -82,19 +86,23 @@ def save_import_data(project_id, month, filename, df, domain_map):
     df: The processed dataframe
     domain_map: The mapping of columns to domains
     """
+    if df.empty:
+        print("No keywords to save. Skipping import.")
+        return False
+
     conn = get_connection()
     cursor = conn.cursor()
     
     try:
-        # 1. Create Import record (Upsert logic)
+        # 1. Create Import record (Upsert logic using INDEX)
         cursor.execute("INSERT OR REPLACE INTO imports (project_id, month, filename) VALUES (?, ?, ?)", 
                        (project_id, month, filename))
-        import_id = cursor.lastrowid
-        if not import_id: # If replaced, get the existing ID
-             cursor.execute("SELECT id FROM imports WHERE project_id = ? AND month = ?", (project_id, month))
-             import_id = cursor.fetchone()[0]
         
-        # 2. Clear old metrics for this import if re-uploading
+        # Get the actual ID (SQLite REPLACE might change it)
+        cursor.execute("SELECT id FROM imports WHERE project_id = ? AND month = ?", (project_id, month))
+        import_id = cursor.fetchone()[0]
+        
+        # 2. Clear old metrics for this import
         cursor.execute("DELETE FROM keyword_metrics WHERE import_id = ?", (import_id,))
         
         # 3. Batch insert metrics
@@ -112,10 +120,10 @@ def save_import_data(project_id, month, filename, df, domain_map):
             
             metrics_list.append((
                 import_id,
-                row['keyword'],
+                str(row['keyword']),
                 int(row['volume']) if pd.notnull(row['volume']) else 0,
                 int(row['difficulty']) if pd.notnull(row['difficulty']) else 0,
-                row.get('intent', 'N/D'),
+                str(row.get('intent', 'N/D')),
                 float(row['cpc']) if pd.notnull(row['cpc']) else 0.0,
                 json.dumps(domain_data)
             ))
