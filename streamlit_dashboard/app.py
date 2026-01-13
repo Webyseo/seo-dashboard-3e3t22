@@ -12,10 +12,19 @@ st.set_page_config(
 )
 
 # Initialize AI
+google_api_key = None
 if "GOOGLE_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    google_api_key = st.secrets["GOOGLE_API_KEY"]
+elif "general" in st.secrets and "GOOGLE_API_KEY" in st.secrets["general"]:
+    google_api_key = st.secrets["general"]["GOOGLE_API_KEY"]
+
+if google_api_key:
+    genai.configure(api_key=google_api_key)
+    # Store for further use
+    st.session_state["api_key_configured"] = True
 else:
-    st.warning("⚠️ GOOGLE_API_KEY no encontrada en secrets.toml. La funcionalidad de IA estará deshabilitada.")
+    st.session_state["api_key_configured"] = False
+    st.warning("⚠️ GOOGLE_API_KEY no encontrada. Comprueba tus Secrets en Streamlit Cloud.")
 
 def serialize_dataframe(df):
     """Convert dataframe to string for AI context, limiting rows to save tokens"""

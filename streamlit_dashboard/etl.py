@@ -91,21 +91,34 @@ def parse_csv_data(file):
                     domain_map[domain]['traffic'] = tcol
                     break
 
-    # Normalization
-    # Keyword, Volume, Difficulty
-    if 'Palabra clave' in df.columns:
-        df['keyword'] = df['Palabra clave']
-    else:
-        return None, "Columna 'Palabra clave' no encontrada."
+    # --- Robust Column Detection for Standard Metrics ---
+    
+    # 1. Keyword
+    kw_variants = ['Palabra clave', 'Keyword', 'Palabras clave']
+    found_kw = next((c for c in kw_variants if c in df.columns), None)
+    df['keyword'] = df[found_kw] if found_kw else "N/D"
 
-    if 'Volumen' in df.columns:
-        df['volume'] = df['Volumen'].apply(normalize_int)
+    # 2. Volume
+    vol_variants = ['Volumen', '# de búsquedas', 'Search Volume', 'Volumen de búsqueda']
+    found_vol = next((c for c in vol_variants if c in df.columns), None)
+    df['volume'] = df[found_vol].apply(normalize_int) if found_vol else 0
     
-    if 'Dificultad de la palabra clave' in df.columns:
-        df['difficulty'] = df['Dificultad de la palabra clave'].apply(normalize_int)
+    # 3. Difficulty
+    diff_variants = ['Dificultad de la palabra clave', 'Google Dificultad Palabra Clave', 'KD', 'Keyword Difficulty']
+    found_diff = next((c for c in diff_variants if c in df.columns), None)
+    df['difficulty'] = df[found_diff].apply(normalize_int) if found_diff else 0
     
-    if 'Intención' in df.columns:
-        df['intent'] = df['Intención']
+    # 4. Intent
+    intent_variants = ['Intención', 'Intent', 'Search Intent']
+    found_intent = next((c for c in intent_variants if c in df.columns), None)
+    df['intent'] = df[found_intent] if found_intent else "N/D"
+
+    # 5. IPC/CPC
+    cpc_variants = ['CPC', 'CPC prom.', 'Coste por clic']
+    found_cpc = next((c for c in cpc_variants if c in df.columns), None)
+    df['cpc'] = df[found_cpc].apply(normalize_currency) if found_cpc else 0.0
+
+    # --- End Robust Detection ---
 
     # Process per-domain data
     # We will create a simplified structure or just keep the DF clean
