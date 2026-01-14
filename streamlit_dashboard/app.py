@@ -4,6 +4,7 @@ import google.generativeai as genai
 import etl
 import database
 import intent_rules
+import utils_metrics
 import plotly.express as px
 from datetime import datetime
 
@@ -417,15 +418,16 @@ if current_view == "global":
             st.subheader("💡 Resumen de Valor Acumulado")
             c1, c2, c3 = st.columns(3)
             
-            # Comparison metrics (First vs Last)
-            first_sov = h_df['SoV'].iloc[0]
-            last_sov = h_df['SoV'].iloc[-1]
-            delta_sov_total = last_sov - first_sov
+            # --- VISIBILIDAD HARDENING (Phase 5) ---
+            vis_stats = utils_metrics.get_visibility_stats(h_df['SoV'])
             
+            # Sync the dataframe with corrected values (for the chart)
+            h_df['SoV'] = vis_stats['series']
+
             c1.metric(
                 "Visibilidad Actual", 
-                f"{last_sov:.1f}%", 
-                delta=f"{delta_sov_total:+.1f} pp" if len(h_df) > 1 else None,
+                vis_stats['formatted_value'], 
+                delta=vis_stats['formatted_delta'],
                 help="Porcentaje de visibilidad en el último mes cargado vs el primero. El delta se expresa en puntos porcentuales (pp)."
             )
             
