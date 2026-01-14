@@ -33,6 +33,36 @@ KPI_TOOLTIPS = {
     'opportunities': 'Keywords en pos 4-10 con alto potencial de subir a Top3'
 }
 
+# Tooltips para columnas de tablas
+COLUMN_HELP = {
+    # Oportunidades
+    'Palabra Clave': 'Término de búsqueda que los usuarios escriben en Google',
+    'Pos. Actual': 'Posición actual de tu sitio en Google para esta keyword (1-100)',
+    'Búsquedas/mes': 'Número estimado de búsquedas mensuales de esta keyword',
+    'Dificultad': 'Dificultad SEO (0-100). Más alto = más difícil posicionar',
+    'Intención': 'Tipo de búsqueda: Informativa (busca info), Transaccional (quiere comprar), Navegacional (busca marca)',
+    'CPC': 'Coste Por Clic en Google Ads. Indica valor comercial de la keyword',
+    'Uplift Tráfico (Top3)': 'Tráfico adicional estimado si esta keyword sube a Top 3 (posiciones 1-3)',
+    'Uplift Valor (€)': 'Valor económico del tráfico adicional (Uplift × CPC). Lo que ahorrarías en publicidad',
+    'Score': 'Puntuación de prioridad (0-100). Combina potencial de tráfico, volumen, valor y dificultad. Más alto = mayor prioridad',
+    
+    # Competencia
+    'Competidor': 'Dominio competidor detectado en el análisis',
+    'Puntuación de Visibilidad': 'Métrica agregada de visibilidad del dominio',
+    'Cuota de Mercado (%)': '% de visibilidad total que captura este dominio frente al total del mercado',
+    
+    # Inteligencia Avanzada
+    'Búsquedas': 'Volumen de búsquedas mensuales',
+    'Ahorro/mes': 'Valor mensual estimado del tráfico orgánico (lo que costaría en Google Ads)',
+    'Tipo': 'Clasificación de la keyword: Marca (incluye nombre de tu empresa) o Genérica (búsqueda general)',
+    
+    # Global/Histórico
+    'Mes': 'Periodo de análisis (YYYY-MM)',
+    'SoV (%)': 'Cuota de Visibilidad en ese mes',
+    'Tráfico Est.': 'Tráfico estimado total del mes',
+    'Valor Est. (€)': 'Valor equivalente en publicidad del tráfico orgánico'
+}
+
 def format_currency(value, currency='EUR'):
     """Formatea valores monetarios según configuración del proyecto"""
     if currency == 'EUR':
@@ -54,6 +84,39 @@ def render_data_quality_panel(df, domain_map):
     num_competitors = len(domain_map)
     
     st.info(f"📊 **Calidad de datos**: CPC {cpc_coverage:.0f}% | Intent {intent_coverage:.0f}% | Competidores {num_competitors} dominios")
+
+def render_help_section():
+    """Renderiza sección de ayuda con glosario de términos"""
+    with st.expander("❓ Glosario de Términos SEO"):
+        st.markdown("""
+        ### 📖 Guía Rápida de Métricas
+        
+        **Cuota de Visibilidad (SoV)**  
+        Porcentaje de visibilidad que tu sitio tiene frente a la competencia. Si tienes 30% y tu competidor 70%, él domina el mercado.
+        
+        **Tráfico Estimado**  
+        Número de visitantes que recibes por búsquedas orgánicas. Se calcula multiplicando el volumen de búsquedas por la tasa de clics según tu posición.
+        
+        **Valor Equivalente (Ads)**  
+        Lo que te costaría conseguir ese mismo tráfico pagando en Google Ads. Es el "ahorro" que te genera el SEO.
+        
+        **Opportunity Score**  
+        Puntuación que combina: ¿Cuánto tráfico puedo ganar? + ¿Qué tan valiosa es la keyword? + ¿Qué tan difícil es mejorar?
+        
+        **Uplift**  
+        Ganancia potencial. "Uplift Tráfico" = visitantes adicionales si subes a Top 3. "Uplift Valor" = valor económico de esos visitantes.
+        
+        **HHI (Índice de Concentración)**  
+        Mide si el mercado está dominado por 1-2 jugadores o es competitivo. Valores altos = mercado concentrado.
+        
+        **Intención de Búsqueda**  
+        - **Informativa**: Usuario busca aprender (ej: "qué es SEO")
+        - **Transaccional**: Usuario quiere comprar (ej: "comprar zapatos online")
+        - **Navegacional**: Usuario busca una marca específica (ej: "Nike tienda")
+        
+        **Dificultad (KD)**  
+        Qué tan difícil es posicionar para esa keyword (0-100). Más alto = más competencia y esfuerzo necesario.
+        """)
 
 # ============================================
 # AI Configuration
@@ -212,14 +275,7 @@ with st.sidebar:
             st.text_input("🔗 Enlace para compartir (Lectura)", share_url)
             
         st.markdown("---")
-        with st.expander("📚 Glosario Ejecutivo"):
-            st.markdown("""
-            - **Share of Voice (SoV)**: Tu cuota de visibilidad en el mercado frente a competidores.
-            - **Clics Estimados**: Tráfico probable basado en volumen y posición (CTR).
-            - **Media Value**: Cuánto te ahorrarías en Google Ads por este tráfico orgánico.
-            - **Striking Distance**: Keywords en pos. 4-10. Fáciles de subir al Top 3.
-            - **Quick Wins**: Oportunidades de alto volumen y baja dificultad.
-            """)
+        render_help_section()
 
 # --- MAIN DASHBOARD ---
 if current_view == "global":
@@ -471,6 +527,15 @@ elif current_view == "monthly" and current_import_id:
             except Exception as e:
                 st.error(f"Error calculando HHI: {str(e)}")
             
+            # Column descriptions
+            with st.expander("ℹ️ ¿Qué significan estas métricas?"):
+                st.markdown(f"""
+                📊 **Cuota de Mercado (%)**: {COLUMN_HELP.get('Cuota de Mercado (%)', '')}  
+                📈 **Puntuación de Visibilidad**: {COLUMN_HELP.get('Puntuación de Visibilidad', '')}  
+                🏢 **Competidor**: {COLUMN_HELP.get('Competidor', '')}  
+                📉 **HHI**: {COLUMN_HELP.get('HHI (Índice de Concentración)', 'Mide si el mercado está dominado por 1-2 jugadores o es competitivo')}
+                """)
+            
             # Bar chart Top 10
             st.markdown("### Top 10 Competidores por Cuota de Visibilidad")
             top_10 = sov_df.head(10)
@@ -510,6 +575,25 @@ elif current_view == "monthly" and current_import_id:
         with t3:
             st.subheader("🎯 Oportunidades de Crecimiento Rápido")
             st.markdown("Keywords priorizadas por **Opportunity Score**: combinación de potencial de tráfico, volumen y dificultad.")
+            
+            # Column descriptions
+            with st.expander("ℹ️ ¿Qué significa cada columna?"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"""
+                    **{COLUMN_HELP.get('Palabra Clave', '')}**  
+                    📍 **Pos. Actual**: {COLUMN_HELP.get('Pos. Actual', '')}  
+                    📊 **Búsquedas/mes**: {COLUMN_HELP.get('Búsquedas/mes', '')}  
+                    ⚡ **Dificultad**: {COLUMN_HELP.get('Dificultad', '')}  
+                    🎯 **Intención**: {COLUMN_HELP.get('Intención', '')}
+                    """)
+                with col2:
+                    st.markdown(f"""
+                    💰 **CPC**: {COLUMN_HELP.get('CPC', '')}  
+                    📈 **Uplift Tráfico**: {COLUMN_HELP.get('Uplift Tráfico (Top3)', '')}  
+                    💎 **Uplift Valor**: {COLUMN_HELP.get('Uplift Valor (€)', '')}  
+                    🏆 **Score**: {COLUMN_HELP.get('Score', '')}
+                    """)
             
             if not opportunities.empty:
                 # Rename columns for display
@@ -557,6 +641,20 @@ elif current_view == "monthly" and current_import_id:
 
         with t4:
             st.subheader("🧠 Inteligencia de Valor y Marca")
+            
+            # Help section
+            with st.expander("ℹ️ ¿Qué muestran estas métricas?"):
+                st.markdown(f"""
+                💰 **Ahorro Estimado**: {COLUMN_HELP.get('Ahorro/mes', '')}  
+                🏷️ **Marca vs Genérico**: {COLUMN_HELP.get('Tipo', '')}  
+                📊 **Búsquedas**: {COLUMN_HELP.get('Búsquedas', '')}
+                
+                **¿Por qué es importante?**  
+                - Keywords de **Marca** indican reconocimiento (la gente te busca por nombre)
+                - Keywords **Genéricas** traen nuevos clientes que no te conocían
+                - El **Ahorro** muestra el valor real del SEO vs. pagar por publicidad
+                """)
+            
             col_a, col_b = st.columns(2)
             
             with col_a:
