@@ -290,7 +290,7 @@ def get_global_ai_analysis(project_id, history_stats_str):
 
 # --- SIDEBAR & NAVIGATION ---
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/270/270798.png", width=50)
+    st.image("streamlit_dashboard/assets/logo_radiofonics.png", width=120)
     st.title("SEO Intelligence")
     
     # Check for Shared View via URL Params
