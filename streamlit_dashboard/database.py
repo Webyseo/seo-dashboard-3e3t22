@@ -58,6 +58,17 @@ def init_db():
     )
     """)
     
+    # NEW: Keyword Intent persistence table (Phase 4)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS keyword_intent (
+        keyword_norm TEXT PRIMARY KEY,
+        keyword_original TEXT,
+        intent_validated TEXT,
+        notes TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    
     conn.commit()
     conn.close()
 
@@ -198,3 +209,38 @@ def get_project_imports(project_id):
     df = pd.read_sql_query("SELECT * FROM imports WHERE project_id = ? ORDER BY month DESC", conn, params=(project_id,))
     conn.close()
     return df
+
+# --- INTENT PERSISTENCE FUNCTIONS (Phase 4) ---
+
+def upsert_keyword_intent(keyword_norm, keyword_original, intent_validated, notes=None):
+    """Guarda o actualiza la intención validada de una keyword"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO keyword_intent (keyword_norm, keyword_original, intent_validated, notes, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(keyword_norm) DO UPDATE SET
+            intent_validated = excluded.intent_validated,
+            notes = excluded.notes,
+            updated_at = CURRENT_TIMESTAMP
+    """, (keyword_norm, keyword_original, intent_validated, notes))
+    conn.commit()
+    conn.close()
+
+def get_validated_intents():
+    """Retorna un dict {keyword_norm: intent_validated}"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT keyword_norm, intent_validated FROM keyword_intent")
+    rows = cursor.fetchall()
+    conn.close()
+    return {r['keyword_norm']: r['intent_validated'] for r in rows}
+
+def get_intent_validation_stats():
+    """Retorna estadísticas de validación"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as count FROM keyword_intent")
+    count = cursor.fetchone()['count']
+    conn.close()
+    return count

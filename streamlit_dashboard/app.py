@@ -3,6 +3,7 @@ import pandas as pd
 import google.generativeai as genai
 import etl
 import database
+import intent_rules
 import plotly.express as px
 from datetime import datetime
 
@@ -40,7 +41,7 @@ COLUMN_HELP = {
     'Pos. Actual': 'Posición actual de tu sitio en Google para esta keyword (1-100)',
     'Búsquedas/mes': 'Número estimado de búsquedas mensuales de esta keyword',
     'Dificultad': 'Dificultad SEO normalizada (0-100). Más alto = más difícil posicionar. Valores >100 se ajustan automáticamente',
-    'Intención': 'Tipo de búsqueda: Informativa (busca info), Transaccional (quiere comprar), Navegacional (busca marca)',
+    'Intención': 'Tipo de búsqueda. (V) = Validada manualmente, (S) = Sugerida por reglas heurísticas.',
     'CPC': 'Coste Por Clic en Google Ads. Indica valor comercial de la keyword',
     'Uplift Tráfico (Top3)': 'Tráfico adicional estimado si esta keyword sube a Top 3 (posiciones 1-3)',
     'Uplift Valor (€)': 'Valor económico del tráfico adicional (Uplift × CPC). Lo que ahorrarías en publicidad',
@@ -80,10 +81,64 @@ def format_number(value):
 def render_data_quality_panel(df, domain_map):
     """Muestra panel de calidad de datos"""
     cpc_coverage = (df['cpc'] > 0).sum() / len(df) * 100 if len(df) > 0 else 0
-    intent_coverage = (df['intent'] != 'N/D').sum() / len(df) * 100 if len(df) > 0 else 0
+    
+    # Calculate validated intent percentage
+    num_validated = (df['origin_intent'] == 'Validada').sum() if 'origin_intent' in df.columns else 0
+    intent_valid_pct = (num_validated / len(df) * 100) if len(df) > 0 else 0
+    
     num_competitors = len(domain_map)
     
-    st.info(f"📊 **Calidad de datos**: CPC {cpc_coverage:.0f}% | Intent {intent_coverage:.0f}% | Competidores {num_competitors} dominios")
+    st.info(f"📊 **Calidad de datos**: CPC {cpc_coverage:.0f}% | Intent Validada {intent_valid_pct:.0f}% | Competidores {num_competitors} dominios")
+
+def render_intent_validation_module(df):
+    """Módulo para validar manualmente la intención de búsqueda"""
+    st.markdown("### 📝 Validar Intención (Enriquecimiento)")
+    st.caption("Selecciona keywords para validar su intención. Los cambios persistirán entre meses.")
+    
+    # Filter for suggested ones with high score to focus on what matters
+    if 'Score' in df.columns:
+        df_to_validate = df[df['origin_intent'] == 'Sugerida'].sort_values('Score', ascending=False).head(20)
+    else:
+        df_to_validate = df[df['origin_intent'] == 'Sugerida'].head(20)
+        
+    if df_to_validate.empty:
+        st.success("✅ ¡Todas las keywords visibles tienen intención validada!")
+        return
+
+    # Prepare data for editor
+    editor_df = df_to_validate[['keyword', 'intent']].copy()
+    editor_df.columns = ['Palabra Clave', 'Intención Sugerida']
+    editor_df['Nueva Intención'] = editor_df['Intención Sugerida']
+    
+    intent_options = ["Informativa", "Comercial", "Transaccional", "Navegacional", "Mixta/Por validar"]
+    
+    edited_df = st.data_editor(
+        editor_df,
+        column_config={
+            "Palabra Clave": st.column_config.TextColumn(disabled=True),
+            "Intención Sugerida": st.column_config.TextColumn(disabled=True),
+            "Nueva Intención": st.column_config.SelectboxColumn(
+                options=intent_options,
+                required=True
+            )
+        },
+        hide_index=True,
+        use_container_width=True,
+        key="intent_editor"
+    )
+    
+    if st.button("Guardar Validaciones"):
+        # Detect rows that changed
+        changed_rows = edited_df[edited_df['Nueva Intención'] != edited_df['Intención Sugerida']]
+        if not changed_rows.empty:
+            for _, row in changed_rows.iterrows():
+                kw_norm = intent_rules.normalize_keyword(row['Palabra Clave'])
+                database.upsert_keyword_intent(kw_norm, row['Palabra Clave'], row['Nueva Intención'])
+            st.success(f"✅ Se han validado {len(changed_rows)} keywords.")
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.warning("No has realizado ningún cambio en la columna 'Nueva Intención'.")
 
 def render_help_section():
     """Renderiza sección de ayuda con glosario de términos"""
@@ -461,6 +516,28 @@ elif current_view == "monthly" and current_import_id:
         main_sov = sov_df[sov_df['domain'] == selected_domain]['sov'].values[0] if not sov_df.empty else 0
         opportunities = etl.get_striking_distance(df, domain_map, selected_domain)
         
+        # --- PHASE 4: INTENT ENRICHMENT ---
+        validated_intents = database.get_validated_intents()
+        
+        def enrich_row(row):
+            kw_norm = intent_rules.normalize_keyword(row['keyword'])
+            # Priority: 1. Validated, 2. Suggested
+            if kw_norm in validated_intents:
+                return validated_intents[kw_norm], "Validada"
+            else:
+                suggestion = intent_rules.infer_intent(row['keyword'])
+                return suggestion['intent_suggested'], "Sugerida"
+
+        intent_results = df.apply(enrich_row, axis=1)
+        df['intent'] = [r[0] for r in intent_results]
+        df['origin_intent'] = [r[1] for r in intent_results]
+        
+        # Also update opportunities DF (it's a subset/copy)
+        if not opportunities.empty:
+            opp_intents = opportunities.apply(enrich_row, axis=1)
+            opportunities['intent'] = [r[0] for r in opp_intents]
+            opportunities['origin_intent'] = [r[1] for r in opp_intents]
+
         pos_col = domain_map.get(selected_domain, {}).get('position')
         top_10 = len(df[df[pos_col] <= 10]) if pos_col else 0
         
@@ -715,18 +792,30 @@ elif current_view == "monthly" and current_import_id:
                 if 'uplift_trafico' in opps_display.columns:
                     opps_display['uplift_trafico'] = opps_display['uplift_trafico'].apply(lambda x: f"{x:,.0f}".replace(',', '.'))
                 
+                # Add (V) or (S) label to intent for clarity
+                opps_display['intent'] = opps_display.apply(lambda x: f"{x['intent']} (V)" if x['origin_intent'] == 'Validada' else f"{x['intent']} (S)", axis=1)
+                
                 opps_display = opps_display.rename(columns=rename_map)
+                
+                # Ensure only display columns are shown
+                final_cols = ['Palabra Clave', 'Pos. Actual', 'Búsquedas/mes', 'Dificultad', 'Intención', 'CPC', 'Uplift Tráfico (Top3)', 'Uplift Valor (€)', 'Score']
+                opps_display = opps_display[[c for c in final_cols if c in opps_display.columns]]
                 
                 st.dataframe(opps_display, use_container_width=True, hide_index=True)
                 
                 # Export button
-                csv = opportunities.to_csv(index=False).encode('utf-8')
+                csv_data = opportunities.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     label="📥 Exportar Oportunidades (CSV)",
-                    data=csv,
+                    data=csv_data,
                     file_name=f"oportunidades_{selected_domain}_{analysis_month}.csv",
                     mime="text/csv"
                 )
+
+            # --- VALIDATION MODULE ---
+            st.markdown("---")
+            with st.expander("📝 Gestionar Calidad: Validar Intención"):
+                render_intent_validation_module(df)
             else:
                 st.info("No hay keywords en posición 4-10 para este mes.")
 
