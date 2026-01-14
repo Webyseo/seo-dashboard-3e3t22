@@ -491,6 +491,24 @@ if current_view == "global":
                 file_name=f"historico_seo_{main_domain}.csv",
                 mime="text/csv"
             )
+
+            # --- ZONA DE GESTIÓN GLOBAL ---
+            st.markdown("---")
+            with st.expander("⚙️ Zona de Gestión Global"):
+                st.warning("⚠️ Acciones delicadas: usa con precaución.")
+                global_mngt_pwd = st.text_input("🔑 Contraseña de Gestión (Global)", type="password", key="global_pwd_input")
+                
+                if global_mngt_pwd == "Webyseo@":
+                    if st.button("🔄 Regenerar Análisis Global", help="Borra el análisis histórico actual y genera uno nuevo."):
+                        cache_key = f"global_report_{project_id}"
+                        if cache_key in st.session_state:
+                            del st.session_state[cache_key]
+                        st.success("Análisis histórico borrado. Refresca la página para generar uno nuevo.")
+                        st.rerun()
+                elif global_mngt_pwd:
+                    st.error("❌ Contraseña incorrecta.")
+                else:
+                    st.info("💡 Introduce la contraseña para habilitar la regeneración del análisis global.")
         else:
             st.info("Sube datos para ver el reporte global.")
 
@@ -659,20 +677,28 @@ elif current_view == "monthly" and current_import_id:
             st.markdown("---")
             with st.expander("⚙️ Zona de Gestión de Datos"):
                 st.warning("⚠️ Acciones delicadas: usa con precaución.")
+                # Password protection for sensitive actions
+                mngt_pwd = st.text_input("🔑 Contraseña de Gestión", type="password", help="Introduce la contraseña para habilitar acciones críticas.")
+                
                 col1, col2 = st.columns(2)
                 
-                if col1.button("🔄 Regenerar Análisis IA", help="Borra el reporte actual y genera uno nuevo con la fecha corregida."):
-                    database.update_report_text(current_import_id, None)
-                    st.success("Reporte borrado con éxito. Al refrescar, la IA generará un nuevo análisis con la fecha del CSV.")
-                    st.rerun()
-                
-                if col2.button("🗑️ Borrar este Mes", help="Elimina permanentemente los datos de este mes para que puedas volver a subirlos."):
-                    conn = database.get_connection()
-                    conn.execute("DELETE FROM imports WHERE id = ?", (current_import_id,))
-                    conn.commit()
-                    conn.close()
-                    st.warning(f"Mes {analysis_month} eliminado del sistema.")
-                    st.rerun()
+                if mngt_pwd == "Webyseo@":
+                    if col1.button("🔄 Regenerar Análisis IA", help="Borra el reporte actual y genera uno nuevo con la fecha corregida."):
+                        database.update_report_text(current_import_id, None)
+                        st.success("Reporte borrado con éxito. Al refrescar, la IA generará un nuevo análisis con la fecha del CSV.")
+                        st.rerun()
+                    
+                    if col2.button("🗑️ Borrar este Mes", help="Elimina permanentemente los datos de este mes para que puedas volver a subirlos."):
+                        conn = database.get_connection()
+                        conn.execute("DELETE FROM imports WHERE id = ?", (current_import_id,))
+                        conn.commit()
+                        conn.close()
+                        st.warning(f"Mes {analysis_month} eliminado del sistema.")
+                        st.rerun()
+                elif mngt_pwd:
+                    st.error("❌ Contraseña incorrecta.")
+                else:
+                    st.info("💡 Introduce la contraseña para habilitar los botones de gestión.")
 
         with t2:
             st.subheader("📊 Comparativa de Mercado")
