@@ -213,25 +213,114 @@ def calculate_sov(df, domain_map, main_domain):
         
     return pd.DataFrame(sov_data).sort_values('sov', ascending=False)
 
+
 def get_striking_distance(df, domain_map, main_domain):
     """
-    Returns keywords where position is 4-10
+    Returns keywords where position is 4-10 with PRO metrics:
+    - Uplift Tráfico Top3
+    - Uplift Valor
+    - Opportunity Score (0-100)
     """
-    if main_domain not in domain_map: return pd.DataFrame()
+    if main_domain not in domain_map: 
+        return pd.DataFrame()
+    
     pos_col = domain_map[main_domain]['position']
     
     # Filter 4 <= pos <= 10
     mask = (df[pos_col] >= 4) & (df[pos_col] <= 10)
     opportunities = df[mask].copy()
     
-    # Filter available columns to avoid KeyError
-    target_cols = ['keyword', 'volume', 'difficulty', 'intent', pos_col]
-    if 'visibility' in domain_map[main_domain]:
-        target_cols.append(domain_map[main_domain]['visibility'])
-        
-    display_cols = [c for c in target_cols if c in df.columns]
-    
-    if not display_cols: 
+    if opportunities.empty:
         return pd.DataFrame()
-        
-    return opportunities[display_cols].sort_values('volume', ascending=False) if 'volume' in display_cols else opportunities[display_cols]
+    
+    # CTR Curve (same as in parse_csv_data)
+    ctr_curve = {
+        1: 0.30, 2: 0.15, 3: 0.10, 4: 0.07, 5: 0.05,
+        6: 0.04, 7: 0.03, 8: 0.025, 9: 0.02, 10: 0.018
+    }
+    
+    # Average CTR for Top 3
+    ctr_top3 = (ctr_curve[1] + ctr_curve[2] + ctr_curve[3]) / 3
+    
+    # Calculate Uplift Tráfico
+    opportunities['uplift_trafico'] = opportunities.apply(
+        lambda x: x['volume'] * (ctr_top3 - ctr_curve.get(int(x[pos_col]), 0)) if x['volume'] > 0 else 0,
+        axis=1
+    )
+    
+    # Calculate Uplift Valor (if CPC available)
+    has_cpc = 'cpc' in opportunities.columns and (opportunities['cpc'] > 0).any()
+    if has_cpc:
+        opportunities['uplift_valor'] = opportunities['uplift_trafico'] * opportunities['cpc']
+    else:
+        opportunities['uplift_valor'] = 0
+    
+    # Opportunity Score (0-100) with adaptive weights
+    def normalize(series):
+        """Min-max normalization"""
+        if series.max() == series.min():
+            return pd.Series([0.5] * len(series), index=series.index)
+        return (series - series.min()) / (series.max() - series.min())
+    
+    has_kd = 'difficulty' in opportunities.columns and (opportunities['difficulty'] > 0).any()
+    
+    # Adaptive scoring based on available data
+    if has_cpc and has_kd:
+        # Full scoring
+        score = (
+            normalize(opportunities['uplift_trafico']) * 0.55 +
+            normalize(opportunities['volume']) * 0.20 +
+            normalize(opportunities['cpc']) * 0.15 +
+            normalize(1 / (opportunities['difficulty'] + 1)) * 0.10
+        ) * 100
+    elif has_cpc:
+        # Without KD
+        score = (
+            normalize(opportunities['uplift_trafico']) * 0.65 +
+            normalize(opportunities['volume']) * 0.25 +
+            normalize(opportunities['cpc']) * 0.10
+        ) * 100
+    elif has_kd:
+        # Without CPC
+        score = (
+            normalize(opportunities['uplift_trafico']) * 0.70 +
+            normalize(opportunities['volume']) * 0.20 +
+            normalize(1 / (opportunities['difficulty'] + 1)) * 0.10
+        ) * 100
+    else:
+        # Minimal scoring
+        score = (
+            normalize(opportunities['uplift_trafico']) * 0.70 +
+            normalize(opportunities['volume']) * 0.30
+        ) * 100
+    
+    opportunities['opportunity_score'] = score.round(1)
+    
+    # Select display columns
+    base_cols = ['keyword', pos_col, 'volume']
+    optional_cols = ['difficulty', 'intent', 'cpc', 'uplift_trafico', 'uplift_valor', 'opportunity_score']
+    
+    display_cols = base_cols + [c for c in optional_cols if c in opportunities.columns]
+    
+    # Sort by Opportunity Score descending
+    return opportunities[display_cols].sort_values('opportunity_score', ascending=False)
+
+def calculate_hhi(sov_df):
+    """
+    Calcula el Índice Herfindahl-Hirschman (HHI) para medir concentración del mercado
+    Returns: (hhi_value, interpretation_text)
+    """
+    hhi = (sov_df['sov'] ** 2).sum()
+    
+    # Interpretación según umbrales estándar
+    if hhi > 2500:
+        interpretation = "🔴 Mercado muy concentrado: 1-2 dominios dominan"
+        color = "red"
+    elif hhi > 1500:
+        interpretation = "🟡 Mercado moderadamente concentrado"
+        color = "orange"
+    else:
+        interpretation = "🟢 Mercado competitivo: visibilidad repartida"
+        color = "green"
+    
+    return hhi, interpretation, color

@@ -16,7 +16,48 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize AI
+# ============================================
+# PRO CONSTANTS - Naming & Formatting
+# ============================================
+KPI_LABELS = {
+    'sov': 'Cuota de Visibilidad (SoV)',
+    'traffic': 'Tráfico Estimado',
+    'value': 'Valor Equivalente (Ads)',
+    'opportunities': 'Oportunidades de Impacto'
+}
+
+KPI_TOOLTIPS = {
+    'sov': '% de visibilidad frente a competidores en este conjunto de keywords',
+    'traffic': 'Estimación: Volumen × CTR(posición)',
+    'value': 'Estimación: Tráfico estimado × CPC',
+    'opportunities': 'Keywords en pos 4-10 con alto potencial de subir a Top3'
+}
+
+def format_currency(value, currency='EUR'):
+    """Formatea valores monetarios según configuración del proyecto"""
+    if currency == 'EUR':
+        # Formato europeo: 1.234,56 €
+        formatted = f"{value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+        return f"{formatted} €"
+    else:
+        # Formato americano: $1,234.56
+        return f"${value:,.2f}"
+
+def format_number(value):
+    """Formatea números grandes con separadores europeos"""
+    return f"{value:,.0f}".replace(',', '.')
+
+def render_data_quality_panel(df, domain_map):
+    """Muestra panel de calidad de datos"""
+    cpc_coverage = (df['cpc'] > 0).sum() / len(df) * 100 if len(df) > 0 else 0
+    intent_coverage = (df['intent'] != 'N/D').sum() / len(df) * 100 if len(df) > 0 else 0
+    num_competitors = len(domain_map)
+    
+    st.info(f"📊 **Calidad de datos**: CPC {cpc_coverage:.0f}% | Intent {intent_coverage:.0f}% | Competidores {num_competitors} dominios")
+
+# ============================================
+# AI Configuration
+# ============================================
 google_api_key = None
 if "GOOGLE_API_KEY" in st.secrets:
     google_api_key = str(st.secrets["GOOGLE_API_KEY"])
@@ -24,7 +65,6 @@ elif "general" in st.secrets and "GOOGLE_API_KEY" in st.secrets["general"]:
     google_api_key = str(st.secrets["general"]["GOOGLE_API_KEY"])
 
 if google_api_key:
-    # Clean key from literal quotes or spaces
     google_api_key = google_api_key.strip().strip('"').strip("'")
     genai.configure(api_key=google_api_key)
     st.session_state["api_key_configured"] = True
@@ -313,6 +353,9 @@ elif current_view == "monthly" and current_import_id:
         st.title(f"Dashboard SEO: {selected_domain}")
         st.caption(f"📅 Mes de Análisis Seleccionado: {analysis_month}")
         
+        # Panel de Calidad de Datos
+        render_data_quality_panel(df, domain_map)
+        
         t1, t2, t3, t4 = st.tabs(["📊 Resumen Ejecutivo", "⚔️ Competencia", "🚀 Oportunidades", "🧠 Inteligencia Avanzada"])
         
         with t1:
@@ -321,10 +364,40 @@ elif current_view == "monthly" and current_import_id:
             
             st.markdown("### KPIs del Mes")
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Share of Voice", f"{main_sov:.1f}%", delta=f"{delta_sov:+.1f}%" if delta_sov is not None else None)
-            c2.metric("Clics Estimados", f"{total_clics:,.0f}", delta=f"{delta_clics:+,.0f}" if delta_clics is not None else None)
-            c3.metric("Media Value", f"${total_media_value:,.0f}")
-            c4.metric("Quick Wins", len(opportunities))
+            
+            # KPI 1: SoV
+            c1.metric(
+                KPI_LABELS['sov'],
+                f"{main_sov:.1f}%",
+                delta=f"{delta_sov:+.1f}%" if delta_sov is not None else None,
+                help=KPI_TOOLTIPS['sov']
+            )
+            
+            # KPI 2: Tráfico Estimado (con badge)
+            with c2:
+                st.metric(
+                    KPI_LABELS['traffic'],
+                    format_number(total_clics),
+                    delta=f"{delta_clics:+,.0f}".replace(',', '.') if delta_clics is not None else None,
+                    help=KPI_TOOLTIPS['traffic']
+                )
+                st.markdown('<span style="background:#FFA500;padding:2px 6px;border-radius:4px;font-size:10px;color:white;">ESTIMADO</span>', unsafe_allow_html=True)
+            
+            # KPI 3: Valor Equivalente (con badge)
+            with c3:
+                st.metric(
+                    KPI_LABELS['value'],
+                    format_currency(total_media_value),
+                    help=KPI_TOOLTIPS['value']
+                )
+                st.markdown('<span style="background:#FFA500;padding:2px 6px;border-radius:4px;font-size:10px;color:white;">ESTIMADO</span>', unsafe_allow_html=True)
+            
+            # KPI 4: Oportunidades
+            c4.metric(
+                KPI_LABELS['opportunities'],
+                len(opportunities),
+                help=KPI_TOOLTIPS['opportunities']
+            )
             
             # Ranking Chart
             st.markdown("---")
@@ -379,35 +452,102 @@ elif current_view == "monthly" and current_import_id:
 
         with t2:
             st.subheader("📊 Comparativa de Mercado")
-            # Rename for display
-            sov_display = sov_df.rename(columns={
-                'domain': 'Competidores',
-                'visibility_score': 'Puntuación de Visibilidad',
-                'sov': '% Cuota de Mercado'
-            })
-            st.dataframe(sov_display, use_container_width=True)
             
-            fig_pie = px.pie(
-                sov_df, 
-                values='sov', 
-                names='domain', 
-                title="Reparto de Cuota de Mercado (Visibilidad)",
-                labels={'domain': 'Dominio', 'sov': 'Cuota (%)'}
+            # Calculate HHI
+            hhi_value, hhi_interpretation, hhi_color = etl.calculate_hhi(sov_df)
+            
+            # Display HHI
+            col_hhi1, col_hhi2 = st.columns([1, 2])
+            with col_hhi1:
+                st.metric("Índice HHI", f"{hhi_value:.0f}", help="Índice Herfindahl-Hirschman: mide concentración del mercado (0-10000)")
+            with col_hhi2:
+                st.markdown(f"**{hhi_interpretation}**")
+            
+            st.markdown("---")
+            
+            # Bar chart Top 10
+            st.markdown("### Top 10 Competidores por Cuota de Visibilidad")
+            top_10 = sov_df.head(10)
+            fig_bar = px.bar(
+                top_10,
+                x='sov',
+                y='domain',
+                orientation='h',
+                title="",
+                labels={'sov': 'Cuota de Visibilidad (%)', 'domain': 'Dominio'},
+                color='sov',
+                color_continuous_scale='Blues'
             )
-            st.plotly_chart(fig_pie, use_container_width=True)
+            fig_bar.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_bar, use_container_width=True)
+            
+            # Table with data
+            st.markdown("### Datos Detallados")
+            sov_display = sov_df.rename(columns={
+                'domain': 'Competidor',
+                'visibility_score': 'Puntuación de Visibilidad',
+                'sov': 'Cuota de Mercado (%)'
+            })
+            st.dataframe(sov_display, use_container_width=True, hide_index=True)
+            
+            # Pie chart (collapsible)
+            with st.expander("📊 Ver Gráfico Circular"):
+                fig_pie = px.pie(
+                    sov_df, 
+                    values='sov', 
+                    names='domain', 
+                    title="Reparto de Cuota de Mercado (Visibilidad)",
+                    labels={'domain': 'Dominio', 'sov': 'Cuota (%)'}
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
 
         with t3:
             st.subheader("🎯 Oportunidades de Crecimiento Rápido")
-            st.markdown("Keywords que ya están en primera página (pos. 4-10) y que con poco esfuerzo pueden subir al Top 3 e impulsar el tráfico.")
+            st.markdown("Keywords priorizadas por **Opportunity Score**: combinación de potencial de tráfico, volumen y dificultad.")
             
-            opps_display = opportunities.rename(columns={
-                'keyword': 'Palabra Clave',
-                'volume': 'Búsquedas Mensuales',
-                'difficulty': 'Dificultad (0-100)',
-                'intent': 'Intención de Búsqueda',
-                pos_col: 'Nuestra Posición Actual'
-            })
-            st.dataframe(opps_display, use_container_width=True)
+            if not opportunities.empty:
+                # Rename columns for display
+                rename_map = {
+                    'keyword': 'Palabra Clave',
+                    'volume': 'Búsquedas/mes',
+                    'difficulty': 'Dificultad',
+                    'intent': 'Intención',
+                    'cpc': 'CPC',
+                    'uplift_trafico': 'Uplift Tráfico (Top3)',
+                    'uplift_valor': 'Uplift Valor (€)',
+                    'opportunity_score': 'Score'
+                }
+                
+                # Add position column if exists
+                if pos_col in opportunities.columns:
+                    rename_map[pos_col] = 'Pos. Actual'
+                
+                opps_display = opportunities.copy()
+                
+                # Format currency columns
+                if 'uplift_valor' in opps_display.columns:
+                    opps_display['uplift_valor'] = opps_display['uplift_valor'].apply(lambda x: f"{x:,.0f} €".replace(',', '.'))
+                if 'cpc' in opps_display.columns:
+                    opps_display['cpc'] = opps_display['cpc'].apply(lambda x: f"{x:.2f} €" if x > 0 else "N/D")
+                
+                # Format number columns
+                if 'uplift_trafico' in opps_display.columns:
+                    opps_display['uplift_trafico'] = opps_display['uplift_trafico'].apply(lambda x: f"{x:,.0f}".replace(',', '.'))
+                
+                opps_display = opps_display.rename(columns=rename_map)
+                
+                st.dataframe(opps_display, use_container_width=True, hide_index=True)
+                
+                # Export button
+                csv = opportunities.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Exportar Oportunidades (CSV)",
+                    data=csv,
+                    file_name=f"oportunidades_{selected_domain}_{analysis_month}.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.info("No hay keywords en posición 4-10 para este mes.")
 
         with t4:
             st.subheader("🧠 Inteligencia de Valor y Marca")
