@@ -39,7 +39,7 @@ COLUMN_HELP = {
     'Palabra Clave': 'Término de búsqueda que los usuarios escriben en Google',
     'Pos. Actual': 'Posición actual de tu sitio en Google para esta keyword (1-100)',
     'Búsquedas/mes': 'Número estimado de búsquedas mensuales de esta keyword',
-    'Dificultad': 'Dificultad SEO (0-100). Más alto = más difícil posicionar',
+    'Dificultad': 'Dificultad SEO normalizada (0-100). Más alto = más difícil posicionar. Valores >100 se ajustan automáticamente',
     'Intención': 'Tipo de búsqueda: Informativa (busca info), Transaccional (quiere comprar), Navegacional (busca marca)',
     'CPC': 'Coste Por Clic en Google Ads. Indica valor comercial de la keyword',
     'Uplift Tráfico (Top3)': 'Tráfico adicional estimado si esta keyword sube a Top 3 (posiciones 1-3)',

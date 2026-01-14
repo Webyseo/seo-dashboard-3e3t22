@@ -103,10 +103,15 @@ def parse_csv_data(file):
     found_vol = next((c for c in vol_variants if c in df.columns), None)
     df['volume'] = df[found_vol].apply(normalize_int) if found_vol else 0
     
-    # 3. Difficulty
+    # 3. Difficulty (normalize to 0-100 scale)
     diff_variants = ['Dificultad de la palabra clave', 'Google Dificultad Palabra Clave', 'KD', 'Keyword Difficulty']
     found_diff = next((c for c in diff_variants if c in df.columns), None)
-    df['difficulty'] = df[found_diff].apply(normalize_int) if found_diff else 0
+    if found_diff:
+        df['difficulty'] = df[found_diff].apply(normalize_int)
+        # Cap at 100 for consistency (some tools use scales >100)
+        df['difficulty'] = df['difficulty'].apply(lambda x: min(x, 100) if x > 0 else 0)
+    else:
+        df['difficulty'] = 0
     
     # 4. Intent
     intent_variants = ['Intención', 'Intent', 'Search Intent']
