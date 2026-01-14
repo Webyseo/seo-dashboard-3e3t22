@@ -1,79 +1,68 @@
-# Documentación para Auditoría de IA: SEO Executive Dashboard (Streamlit Version)
+# Documentación de Auditoría: SEO Intelligence Dashboard (Streamlit)
 
-Este documento detalla las capacidades, lógica y arquitectura del **SEO Executive Dashboard** para que un modelo de IA pueda auditar su funcionamiento y proponer mejoras estratégicas.
-
----
-
-## 1. Propósito del Dashboard
-El objetivo principal es transformar exportaciones CSV brutas de herramientas SEO (Semrush, Sistrix, Ahrefs) en un **reporte ejecutivo accionable**. Está diseñado para Directores de Marketing o Dueños de Negocio que necesitan entender el mercado sin perderse en tablas de miles de filas.
+Este documento sirve como referencia técnica y funcional para la auditoría, mantenimiento y escalado del **SEO Executive Dashboard**. Está diseñado para proporcionar a un modelo de IA o auditor externo el contexto necesario para entender la lógica de negocio y la arquitectura del sistema.
 
 ---
 
-## 2. Arquitectura y Stack
--   **Core**: Python 3.9+
--   **Frontend/App**: Streamlit (Framework interactivo para datos).
--   **Procesamiento**: Pandas (Lógica de dataframes y vectorización).
--   **Visualización**: Plotly Express (Gráficos interactivos).
--   **IA Co-Pilot**: Google Gemini API (Modelo `gemini-1.5-flash` o `gemini-2.0-flash`).
--   **Despliegue**: Optimizado para Streamlit Cloud / GitHub.
+## 🏗️ 1. Arquitectura Técnica y Stack
+El dashboard está diseñado para ser ligero, reactivo y persistente.
+- **Frontend**: Streamlit + Custom CSS para una estética "Glassmorphism" premium.
+- **Backend / ETL**: Python 3.9+, Pandas para manipulación de datasets masivos.
+- **Base de Datos**: SQLite (Persistence Layer) gestionando 3 niveles: `Projects` > `Imports` > `Keyword Metrics`.
+- **Análisis Predictivo**: Google Gemini Pro para resúmenes ejecutivos condicionados por datos reales.
+- **Despliegue**: Compatible con Streamlit Cloud (requiere `secrets.toml` para `GOOGLE_API_KEY`).
 
 ---
 
-## 3. Motor de Datos (ETL)
-La inteligencia del dashboard reside en `etl.py`, que realiza las siguientes funciones:
-
-### A. Detección Dinámica de Dominios
-El sistema no requiere configurar competidores. Escanea las cabeceras del CSV buscando patrones:
--   `Visibilidad [dominio.com]`
--   `Visibilidad dominio.com`
--   `Posición en Google dominio.com`
-Esto permite cargar cualquier CSV y que la herramienta identifique al instante quiénes son los jugadores del mercado.
-
-### B. Normalización Robusta
-Maneja las inconsistencias de los formatos internacionales:
--   Limpieza de caracteres especiales en monedas y porcentajes.
--   Conversión de "N/D" o guiones a valores numéricos manejables (0 o None).
--   Mapping de columnas: Identifica sinónimos como "Volumen" vs "# de búsquedas" o "KD" vs "Dificultad".
+## 🔍 2. El Motor ETL (`etl.py`)
+La magia del sistema reside en su capacidad de procesar archivos de exportación de SEO (Semrush/Sistrix) sin pre-procesamiento manual.
+- **Detección Dinámica**: El sistema escanea las cabeceras buscando patrones (`Visibilidad [...]`, `Posición [...]`). No depende de un orden de columnas fijo.
+- **Curvas de CTR Organico**: Implementa una función de caída de tráfico basada en la posición actual (Top 1 = 30%, Top 2 = 15%, etc.).
+- **Calculos Derivados**:
+    - `Clics Estimados = Volumen * CTR(Posición)`.
+    - `Media Value = Clics Estimados * CPC`.
+- **Normalización**: Limpieza automática de €, $, %, decimales europeos (`,`) y americanos (`.`).
 
 ---
 
-## 4. Funcionalidades Principales
-
-### 📊 Pestaña: Resumen Ejecutivo
--   **Reporte IA Generativo**: Utiliza Gemini para leer los KPIs y la muestra de oportunidades y redactar un resumen de 3 párrafos con: Contexto actual, Análisis de competencia y 3 recomendaciones críticas.
--   **KPI Cards**:
-    -   **Share of Voice (SoV)**: % de visibilidad del dominio seleccionado frente al total del mercado detectado.
-    -   **Top 3 / Top 10**: Conteo de keywords en posiciones privilegiadas.
-    -   **Quick Wins**: Número de keywords con potencial inmediato.
--   **Gráfico de Rankings**: Histograma de distribución (Buckets: 1-3, 4-10, 11-20, 20+).
-
-### ⚔️ Pestaña: Competencia
--   **Market Split (Pie Chart)**: Visualización de la cuota de mercado basada en la visibilidad acumulada.
--   **Benchmark Table**: Tabla que compara a todos los dominios detectados en el CSV por su visibilidad total.
-
-### 🚀 Pestaña: Oportunidades (Striking Distance)
--   **Lógica de Filtrado**: Identifica keywords donde el dominio principal está en **Posición 4 a 10**.
--   **Propósito**: Son términos que ya están en primera página pero no en el Top 3. Optimizarlos requiere menos esfuerzo que subir desde la página 2 y ofrece el mayor retorno de inversión (ROI) a corto plazo.
+## 💾 3. Capa de Persistencia (`database.py`)
+Maneja el ciclo de vida de los datos:
+1. **Projects**: Registra el dominio principal y nombre del cliente.
+2. **Imports**: Vincula cada archivo CSV a un mes (`YYYY-MM`) y almacena el texto del reporte generado por la IA.
+3. **Keyword Metrics**: Almacenamiento granular de cada palabra clave. Los datos de competidores se guardan en un campo `data_json` para permitir comparativas N-dimensionales sin alterar el esquema SQL.
 
 ---
 
-## 5. Lógica de Métricas (Fórmulas)
--   **Total Market Visibility**: `sum(Visiblidad de todos los dominios detectados)`.
--   **Share of Voice (SoV)**: `(Visibilidad Dominio / Total Market Visibility) * 100`.
--   **Visibilidad**: Valor indexado proporcionado por el CSV (normalmente basado en volumen * CTR estimado).
+## 📊 4. Módulos Visuales y Estadísticas
+
+### 1. Resumen Ejecutivo (Vista Mensual)
+- **KPI Cards**: Muestra *Share of Voice* (SoV), *Tráfico Estimado*, *Ahorro Estimado* y *Oportunidades*. Incluye deltas comparativos automáticos (MoM) si existe un mes previo.
+- **Análisis IA**: Bloque de texto generado por Gemini que interpreta los datos del mes, detecta anomalías y sugiere pasos a seguir.
+- **Distribución de Rankings**: Gráfico de barras color-coded que segmenta las palabras clave en Top 3, 4-10 (zona de ataque), 11-20 y +20.
+
+### 2. Comparativa de Competencia (Market Share)
+- **Market Split**: Gráfico circular que muestra el SoV relativo entre todos los dominios detectados en el CSV.
+- **Gap Analysis**: Identifica quién es el líder del mercado y a qué distancia se encuentra el proyecto principal.
+
+### 3. Matriz de Oportunidades (Striking Distance)
+- **Quick Wins**: Filtro automático de keywords en posiciones 4 a 10 con alto volumen.
+- **Estrategia**: Prioriza los esfuerzos de contenido donde el impacto de subir 1-3 posiciones es máximo.
+
+### 4. Resumen Global (Visión Histórica)
+- **Tendencia MoM**: Gráficas de línea y área que muestran la cuota de mercado y el tráfico acumulado a lo largo de todos los meses subidos.
+- **Tabla Maestra**: Desglose mensual de KPIs para exportación o revisión de auditoría.
 
 ---
 
-## 6. Puntos para Auditoría y Mejora
-Un modelo de IA que audite este dashboard debería considerar:
-1.  **Predicción de Tráfico**: Actualmente se usa la visibilidad del CSV. Se podría implementar una curva de CTR propia basada en la posición.
-2.  **Análisis de Intención**: Usar la columna `intent` para agrupar oportunidades (Informativa vs Transaccional).
-3.  **Media Value**: Calcular cuánto costaría esa visibilidad en Google Ads (usando la columna CPC).
-4.  **Canibalización**: Detectar si una misma keyword tiene múltiples URLs posicionadas.
-5.  **Histórico**: El dashboard actual es mono-mes. Implementar carga de múltiples meses para ver tendencias (MoM).
+## ⚠️ 5. Zona de Gestión y Seguridad
+- **Regeneración de IA**: Permite borrar y volver a generar el reporte de IA si se detectan errores o si el prompt ha sido actualizado.
+- **Borrado Selectivo**: Posibilidad de eliminar meses específicos para corregir subidas erróneas.
+- **Shared URLs**: Generación de enlaces de solo lectura (`?import_id=...`) para compartir con clientes sin exponer la zona de edición o subida de datos.
 
 ---
 
-## 7. Configuración de Seguridad
--   **Secrets**: La API Key de Google se maneja vía `st.secrets` para evitar fugas en el código.
--   **Caché**: Se utiliza `st.session_state` para evitar llamadas redundantes a la API de IA durante la navegación por los tabs.
+## 🛠️ Notas para Auditoría de IA
+Al auditar este código, se debe prestar especial atención a:
+- La robustez de `etl.py` ante cabeceras de CSV desconocidas.
+- La eficiencia de la persistencia en `database.py` al manejar batches de miles de palabras clave.
+- La coherencia de las fechas en el prompt de la IA en `app.py`.

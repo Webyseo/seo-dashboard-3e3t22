@@ -224,10 +224,14 @@ def get_striking_distance(df, domain_map, main_domain):
     mask = (df[pos_col] >= 4) & (df[pos_col] <= 10)
     opportunities = df[mask].copy()
     
-    # Add relevant columns for display
-    display_cols = ['keyword', 'volume', 'difficulty', 'intent', pos_col]
-    # Add visibility if exists
+    # Filter available columns to avoid KeyError
+    target_cols = ['keyword', 'volume', 'difficulty', 'intent', pos_col]
     if 'visibility' in domain_map[main_domain]:
-        display_cols.append(domain_map[main_domain]['visibility'])
+        target_cols.append(domain_map[main_domain]['visibility'])
         
-    return opportunities[display_cols].sort_values('volume', ascending=False)
+    display_cols = [c for c in target_cols if c in df.columns]
+    
+    if not display_cols: 
+        return pd.DataFrame()
+        
+    return opportunities[display_cols].sort_values('volume', ascending=False) if 'volume' in display_cols else opportunities[display_cols]
