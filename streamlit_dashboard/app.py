@@ -188,6 +188,51 @@ def get_ai_analysis(import_id, summary_stats, opportunities_sample, analysis_mon
     except Exception as e:
         return f"Error en IA: {str(e)}"
 
+def get_global_ai_analysis(project_id, history_stats_str):
+    """Genera un análisis histórico de tendencias usando Gemini Pro"""
+    if not st.session_state.get("api_key_configured"):
+        return "⚠️ Configura una API Key válida para habilitar el análisis global de IA."
+    
+    # Simple caching in session state by project
+    cache_key = f"global_report_{project_id}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+    
+    try:
+        models = ['gemini-2.0-flash-exp', 'gemini-1.5-flash']
+        selected_model = 'gemini-1.5-flash'
+        try:
+            available = [m.name for m in genai.list_models()]
+            for m in models:
+                if any(m in a for a in available):
+                    selected_model = m
+                    break
+        except: pass
+            
+        model = genai.GenerativeModel(selected_model)
+        
+        prompt = f"""
+        Actúa como un Consultor SEO Senior. Analiza la EVOLUCIÓN HISTÓRICA del proyecto SEO y ayuda al cliente a entender el valor generado.
+        
+        ## Datos Históricos (Métricas por Mes)
+        {history_stats_str}
+        
+        ## Instrucciones:
+        1. Contexto Estratégico: Resume la tendencia general (%) y si hay crecimiento sostenido.
+        2. Hitos de Valor: Destaca el mes con mayor visibilidad o tráfico.
+        3. Recomendación Forward-looking: 1 consejo para el próximo trimestre.
+        
+        Sé muy directo, enfocado a negocio. Usa Markdown elegante.
+        """
+        
+        response = model.generate_content(prompt)
+        report_text = response.text
+        
+        st.session_state[cache_key] = report_text
+        return report_text
+    except Exception as e:
+        return f"❌ Error en análisis global: {str(e)}"
+
 # --- SIDEBAR & NAVIGATION ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/270/270798.png", width=50)
@@ -284,69 +329,115 @@ if current_view == "global":
     
     all_imports = database.get_project_imports(project_id)
     
-    history_data = []
-    # Progress bar for loading historical data
-    progress_bar = st.progress(0)
-    for i, (_, imp) in enumerate(all_imports.iterrows()):
-        df_month, d_map = database.load_import_data(imp['id'])
-        if not df_month.empty:
-            sov_df = etl.calculate_sov(df_month, d_map, main_domain)
-            sov = sov_df[sov_df['domain'] == main_domain]['sov'].values[0] if not sov_df.empty else 0
-            history_data.append({
-                'Mes': imp['month'],
-                'Cuota de Mercado (%)': sov,
-                'Clics Estimados': df_month[f'clics_{main_domain}'].sum() if f'clics_{main_domain}' in df_month.columns else 0,
-                'Ahorro Estimado': df_month[f'media_value_{main_domain}'].sum() if f'media_value_{main_domain}' in df_month.columns else 0
-            })
-        progress_bar.progress((i + 1) / len(all_imports))
-    progress_bar.empty()
-    
-    if history_data:
-        h_df = pd.DataFrame(history_data).sort_values('Mes')
-        
-        # Overall Summary Cards (Aggregated)
-        st.markdown("### Resumen Acumulado")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Cuota de Mercado Media", f"{h_df['Cuota de Mercado (%)'].mean():.1f}%")
-        c2.metric("Total Clics Acumulados", f"{h_df['Clics Estimados'].sum():,.0f}")
-        c3.metric("Total Ahorro Acumulado", f"${h_df['Ahorro Estimado'].sum():,.0f}")
-        
-        # Trend Chart
-        st.markdown("---")
-        st.markdown("### 📈 Evolución de KPIs")
-        
-        # We ensure Mes is treated as category to avoid plotly daily interpolation
-        fig_sov = px.line(
-            h_df, 
-            x='Mes', 
-            y='Cuota de Mercado (%)', 
-            title="Tendencia de Cuota de Mercado (%)", 
-            markers=True,
-            labels={'Mes': 'Periodo'}
-        )
-        fig_sov.update_xaxes(type='category')
-        st.plotly_chart(fig_sov, use_container_width=True)
-        
-        fig_clics = px.area(
-            h_df, 
-            x='Mes', 
-            y='Clics Estimados', 
-            title="Evolución de Tráfico (Clics Estimados)", 
-            markers=True,
-            labels={'Mes': 'Periodo'}
-        )
-        fig_clics.update_xaxes(type='category')
-        st.plotly_chart(fig_clics, use_container_width=True)
-        
-        st.subheader("📋 Tabla de Datos Históricos")
-        st.dataframe(h_df.rename(columns={
-            'Mes': 'Periodo',
-            'Cuota de Mercado (%)': '% Visibilidad',
-            'Clics Estimados': 'Tráfico Est.',
-            'Ahorro Estimado': 'Valor Media ($)'
-        }), use_container_width=True, hide_index=True)
-    else:
+    if all_imports.empty:
         st.info("Sube más datos mensuales para desbloquear la vista histórica.")
+    else:
+        history_data = []
+        progress_bar = st.progress(0)
+        for i, (_, imp) in enumerate(all_imports.iterrows()):
+            df_month, d_map = database.load_import_data(imp['id'])
+            if not df_month.empty:
+                sov_df = etl.calculate_sov(df_month, d_map, main_domain)
+                sov = sov_df[sov_df['domain'] == main_domain]['sov'].values[0] if not sov_df.empty else 0
+                history_data.append({
+                    'Mes': imp['month'],
+                    'SoV': sov,
+                    'Tráfico': df_month[f'clics_{main_domain}'].sum() if f'clics_{main_domain}' in df_month.columns else 0,
+                    'Ahorro': df_month[f'media_value_{main_domain}'].sum() if f'media_value_{main_domain}' in df_month.columns else 0
+                })
+            progress_bar.progress((i + 1) / len(all_imports))
+        progress_bar.empty()
+        
+        if history_data:
+            h_df = pd.DataFrame(history_data).sort_values('Mes')
+            
+            # --- AI GLOBAL INSIGHTS ---
+            stats_summary = h_df.to_string(index=False)
+            global_insights = get_global_ai_analysis(project_id, stats_summary)
+            
+            st.info(global_insights, icon="🤖")
+            st.markdown("---")
+            
+            # Overall Summary Cards (Aggregated)
+            st.subheader("💡 Resumen de Valor Acumulado")
+            c1, c2, c3 = st.columns(3)
+            
+            # Comparison metrics (First vs Last)
+            first_sov = h_df['SoV'].iloc[0]
+            last_sov = h_df['SoV'].iloc[-1]
+            delta_sov_total = last_sov - first_sov
+            
+            c1.metric(
+                "Visibilidad Actual", 
+                f"{last_sov:.1%}", 
+                delta=f"{delta_sov_total:+.1%}" if len(h_df) > 1 else None,
+                help="Porcentaje de visibilidad en el último mes cargado vs el primero."
+            )
+            
+            total_clics = h_df['Tráfico'].sum()
+            c2.metric(
+                "Total Tráfico Capturado", 
+                format_number(total_clics),
+                help="Suma total de clics estimados de todos los meses analizados."
+            )
+            
+            total_ahorro = h_df['Ahorro'].sum()
+            c3.metric(
+                "Total Ahorro (Media Value)", 
+                format_currency(total_ahorro),
+                help="Suma total del valor económico equivalente en Google Ads (€)."
+            )
+            
+            # Trend Chart
+            st.markdown("---")
+            st.markdown("### 📈 Evolución Histórica")
+            
+            col_chart1, col_chart2 = st.columns(2)
+            
+            with col_chart1:
+                fig_sov = px.line(
+                    h_df, 
+                    x='Mes', 
+                    y='SoV', 
+                    title="Tendencia de Visibilidad (%)", 
+                    markers=True,
+                    color_discrete_sequence=['#4CAF50'],
+                    labels={'SoV': 'Cuota de Visibilidad'}
+                )
+                fig_sov.update_xaxes(type='category')
+                st.plotly_chart(fig_sov, use_container_width=True)
+            
+            with col_chart2:
+                fig_clics = px.area(
+                    h_df, 
+                    x='Mes', 
+                    y='Tráfico', 
+                    title="Evolución de Tráfico (Visitantes)", 
+                    markers=True,
+                    color_discrete_sequence=['#2196F3'],
+                    labels={'Tráfico': 'Clics Estimados'}
+                )
+                fig_clics.update_xaxes(type='category')
+                st.plotly_chart(fig_clics, use_container_width=True)
+            
+            st.subheader("📋 Detalle Histórico")
+            st.dataframe(h_df.rename(columns={
+                'Mes': 'Periodo',
+                'SoV': '% Visibilidad',
+                'Tráfico': 'Tráfico Est.',
+                'Ahorro': 'Valor Media (€)'
+            }), use_container_width=True, hide_index=True)
+            
+            # Export all history
+            csv_history = h_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Descargar Histórico Completo (CSV)",
+                data=csv_history,
+                file_name=f"historico_seo_{main_domain}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.info("Sube datos para ver el reporte global.")
 
 elif current_view == "monthly" and current_import_id:
     df, domain_map = database.load_import_data(current_import_id)
@@ -380,7 +471,7 @@ elif current_view == "monthly" and current_import_id:
         # AI Report Logic
         report_display = stored_report
         if not report_display:
-            stats_str = f"Dom: {selected_domain}, SoV: {main_sov:.2f}%, Top 10: {top_10}, Clics Est: {total_clics:.0f}, Media Value: ${total_media_value:.0f}"
+            stats_str = f"Dom: {selected_domain}, SoV: {main_sov:.2f}%, Top 10: {top_10}, Clics Est: {total_clics:.0f}, Media Value: {total_media_value:.0f}€"
             opps_str = opportunities.head(10).to_string(index=False)
             report_display = get_ai_analysis(current_import_id, stats_str, opps_str, analysis_month)
 
