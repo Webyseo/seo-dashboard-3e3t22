@@ -453,17 +453,23 @@ elif current_view == "monthly" and current_import_id:
         with t2:
             st.subheader("📊 Comparativa de Mercado")
             
-            # Calculate HHI
-            hhi_value, hhi_interpretation, hhi_color = etl.calculate_hhi(sov_df)
-            
-            # Display HHI
-            col_hhi1, col_hhi2 = st.columns([1, 2])
-            with col_hhi1:
-                st.metric("Índice HHI", f"{hhi_value:.0f}", help="Índice Herfindahl-Hirschman: mide concentración del mercado (0-10000)")
-            with col_hhi2:
-                st.markdown(f"**{hhi_interpretation}**")
-            
-            st.markdown("---")
+            # Calculate HHI with error handling
+            try:
+                if not sov_df.empty and 'sov' in sov_df.columns:
+                    hhi_value, hhi_interpretation, hhi_color = etl.calculate_hhi(sov_df)
+                    
+                    # Display HHI
+                    col_hhi1, col_hhi2 = st.columns([1, 2])
+                    with col_hhi1:
+                        st.metric("Índice HHI", f"{hhi_value:.0f}", help="Índice Herfindahl-Hirschman: mide concentración del mercado (0-10000)")
+                    with col_hhi2:
+                        st.markdown(f"**{hhi_interpretation}**")
+                    
+                    st.markdown("---")
+                else:
+                    st.warning("No hay datos de competencia suficientes para calcular HHI")
+            except Exception as e:
+                st.error(f"Error calculando HHI: {str(e)}")
             
             # Bar chart Top 10
             st.markdown("### Top 10 Competidores por Cuota de Visibilidad")
