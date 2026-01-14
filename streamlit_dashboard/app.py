@@ -424,9 +424,9 @@ if current_view == "global":
             
             c1.metric(
                 "Visibilidad Actual", 
-                f"{last_sov:.1%}", 
-                delta=f"{delta_sov_total:+.1%}" if len(h_df) > 1 else None,
-                help="Porcentaje de visibilidad en el último mes cargado vs el primero."
+                f"{last_sov:.1f}%", 
+                delta=f"{delta_sov_total:+.1f} pp" if len(h_df) > 1 else None,
+                help="Porcentaje de visibilidad en el último mes cargado vs el primero. El delta se expresa en puntos porcentuales (pp)."
             )
             
             total_clics = h_df['Tráfico'].sum()
