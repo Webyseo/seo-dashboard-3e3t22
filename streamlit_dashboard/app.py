@@ -811,13 +811,13 @@ elif current_view == "monthly" and current_import_id:
                     file_name=f"oportunidades_{selected_domain}_{analysis_month}.csv",
                     mime="text/csv"
                 )
+            else:
+                st.info("No hay keywords en posición 4-10 para este mes.")
 
             # --- VALIDATION MODULE ---
             st.markdown("---")
             with st.expander("📝 Gestionar Calidad: Validar Intención"):
                 render_intent_validation_module(df)
-            else:
-                st.info("No hay keywords en posición 4-10 para este mes.")
 
         with t4:
             st.subheader("🧠 Inteligencia de Valor y Marca")
