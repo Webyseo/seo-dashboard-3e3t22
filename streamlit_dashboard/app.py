@@ -830,12 +830,15 @@ elif current_view == "monthly" and current_import_id:
                 
                 opp_display['Intención'] = opp_display['intent'].apply(format_intent)
 
+                # Use the dynamic position column name for selection, then rename
+                cols_to_select = ['keyword', pos_col, 'volume', 'difficulty', 'Intención', 'CPC Est.', 'uplift_clicks', 'Uplift Valor', 'Score']
+                # Filter strictly for existing columns to avoid KeyError
+                cols_to_select = [c for c in cols_to_select if c in opp_display.columns]
+
                 st.dataframe(
-                    opp_display[[
-                        'keyword', 'Posición Actual', 'volume', 'difficulty', 'Intención', 
-                        'CPC Est.', 'uplift_clicks', 'Uplift Valor', 'Score'
-                    ]].rename(columns={
+                    opp_display[cols_to_select].rename(columns={
                         'keyword': 'Palabra Clave',
+                        pos_col: 'Posición Actual',
                         'volume': 'Búsquedas/mes',
                         'difficulty': 'Dificultad',
                         'uplift_clicks': 'Uplift Tráfico'
