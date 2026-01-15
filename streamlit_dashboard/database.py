@@ -244,3 +244,31 @@ def get_intent_validation_stats():
     count = cursor.fetchone()['count']
     conn.close()
     return count
+
+def get_keyword_history(project_id, keyword):
+    """
+    Retrieves the history of a specific keyword across all imports for a project.
+    Returns a dataframe with: month, position, volume, cpc, intent, difficulty, and domain-specific metrics.
+    """
+    conn = get_connection()
+    query = """
+    SELECT 
+        i.month,
+        km.volume,
+        km.difficulty,
+        km.intent,
+        km.cpc,
+        km.data_json
+    FROM keyword_metrics km
+    JOIN imports i ON km.import_id = i.id
+    WHERE i.project_id = ? AND km.keyword = ?
+    ORDER BY i.month ASC
+    """
+    try:
+        df = pd.read_sql_query(query, conn, params=(project_id, keyword))
+        return df
+    except Exception as e:
+        print(f"Error fetching keyword history: {e}")
+        return pd.DataFrame()
+    finally:
+        conn.close()

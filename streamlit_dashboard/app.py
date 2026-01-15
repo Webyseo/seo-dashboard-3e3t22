@@ -192,55 +192,75 @@ else:
 
 # Helper for AI Report
 def get_ai_analysis(import_id, summary_stats, opportunities_sample, analysis_month):
-    """Generates or retrieves AI report from DB"""
+    """Generates or retrieves AI report from DB with Marketing-First focus"""
     if not st.session_state.get("api_key_configured"):
         return "⚠️ Configura una API Key válida para habilitar el reporte de IA."
     
     try:
-        # Try both preview and stable models as fallback
-        models = ['gemini-2.0-flash-exp', 'gemini-1.5-flash']
-        selected_model = None
-        
-        # Check available models via diagnostic
+        # Upgrade to Gemini 1.5 Flash (Client Request Phase 6)
+        # UPDATE: User requested priority for gemini-3-flash-preview
+        models_priority = ['gemini-3-flash-preview', 'gemini-2.0-flash-exp', 'gemini-1.5-flash']
+        selected_model = 'gemini-1.5-flash' # Default fallback
+
         try:
-            available = [m.name for m in genai.list_models()]
-            for m in models:
-                if any(m in a for a in available):
+            available_models = [m.name for m in genai.list_models()]
+            # Clean available names (remove 'models/')
+            available_names = [n.replace('models/', '') for n in available_models]
+            
+            for m in models_priority:
+                if m in available_names:
                     selected_model = m
                     break
-        except:
-            selected_model = 'gemini-1.5-flash' # Default fallback
+        except Exception as e:
+            print(f"Error listing models: {e}")
             
-        model = genai.GenerativeModel(selected_model or 'gemini-1.5-flash')
+        model = genai.GenerativeModel(selected_model)
         
         prompt = f"""
-        Actúa como un Consultor SEO Senior. Analiza los siguientes datos de un sitio web para el PERIODO EXCLUSIVO de {analysis_month} y genera un reporte ejecutivo en Español.
+        Actúa como un Director de Marketing y Estratega SEO Senior. Tu audiencia es el equipo de marketing, no técnicos SEO.
+        Analiza los datos del mes: {analysis_month}.
         
-        ## REGLA DE ORO DE LA FECHA
-        El periodo de análisis es: {analysis_month}
-        **IMPORTANTE**: NO inventes fechas. NO uses la fecha de hoy (ignore system date). 
-        El reporte DEBE comenzar con: # Informe Ejecutivo SEO - {analysis_month}
-        
-        ## Datos del Proyecto ({analysis_month})
+        DATOS CLAVE:
         {summary_stats}
         
-        ## Muestra de Oportunidades
+        TOP OPORTUNIDADES (Volumen alto, Posición 4-10):
         {opportunities_sample}
         
-        ## Instrucciones de Estructura
-        1. Resumen Ejecutivo: Estado actual y salud del proyecto en {analysis_month}.
-        2. Análisis de Competencia: Quien domina el mercado.
-        3. Acciones Recomendadas: 3 balas con las acciones más críticas.
+        Genera un informe estratégico con EXACTAMENTE esta estructura (usa Markdown):
+
+        ## 1. Resumen Ejecutivo
+        * **Qué ha pasado**: Breve resumen de la situación (visibilidad, tráfico, valor).
+        * **Cambios Clave**: Qué ha mejorado o empeorado respecto al mes anterior.
+        * **Impacto Real**: Traduce los datos a impacto de negocio (posibles leads/ventas).
+
+        ## 2. Diagnóstico basado en Datos
+        * **Keywords Destacadas**: Menciona 2-3 keywords que están moviendo la aguja.
+        * **Quick Wins Identificados**: Oportunidades claras para atacar ya.
+        * **Riesgos**: Dependencia de marca excesiva, caídas en keywords clave, etc.
+
+        ## 3. Recomendaciones para Marketing (ACCIONABLES)
+        *Divide en acciones claras:*
+        * **🛡️ Acciones Prioritarias**:
+            * "Crear contenido nuevo para: [TEMA/KEYWORD]"
+            * "Optimizar landing page de: [URL/KEYWORD]"
+        * **🚫 Acciones a Evitar**:
+            * "No crear contenido sobre X porque canibaliza..."
         
-        Sé breve, directo y profesional. Usa formato Markdown.
+        ## 4. Checklist Operativo
+        * [ ] Tarea 1
+        * [ ] Tarea 2
+        * [ ] Tarea 3
+        
+        **Tono**: Directivo, estratégico, orientado a la acción. NO uses jerga técnica innecesaria. NO inventes datos.
         """
         
-        with st.spinner('🤖 Generando análisis estratégico...'):
+        with st.spinner('🧠 Analizando estrategia de marketing (Gemini 1.5 Flash)...'):
             response = model.generate_content(prompt)
             report_text = response.text
             # Save to DB
             database.update_report_text(import_id, report_text)
             return report_text
+            
     except Exception as e:
         return f"Error en IA: {str(e)}"
 
@@ -600,7 +620,7 @@ elif current_view == "monthly" and current_import_id:
         # Panel de Calidad de Datos
         render_data_quality_panel(df, domain_map)
         
-        t1, t2, t3, t4 = st.tabs(["📊 Resumen Ejecutivo", "⚔️ Competencia", "🚀 Oportunidades", "🧠 Inteligencia Avanzada"])
+        t1, t2, t3, t4, t5 = st.tabs(["📊 Resumen Ejecutivo", "⚔️ Competencia", "🚀 Oportunidades", "🧠 Inteligencia Avanzada", "🔎 Deep Dive"])
         
         with t1:
             st.subheader("💡 Análisis Estratégico")
@@ -732,9 +752,26 @@ elif current_view == "monthly" and current_import_id:
                 📉 **HHI**: {COLUMN_HELP.get('HHI (Índice de Concentración)', 'Mide si el mercado está dominado por 1-2 jugadores o es competitivo')}
                 """)
             
+            # Wrapper for Competitor Analysis with Filters (Phase 6)
+            st.markdown("### 🔬 Análisis Granular (Filtros)")
+            selected_keywords_comp = st.multiselect(
+                "Filtrar por Keywords específicas (deja vacío para ver todo el mercado):",
+                options=df['keyword'].unique()
+            )
+            
+            # Recalculate SOV if filter is active
+            display_sov_df = sov_df
+            if selected_keywords_comp:
+                filtered_comp_df = df[df['keyword'].isin(selected_keywords_comp)]
+                if not filtered_comp_df.empty:
+                    display_sov_df = etl.calculate_sov(filtered_comp_df, domain_map, selected_domain)
+                    st.caption(f"Análisis basado en {len(selected_keywords_comp)} keywords seleccionadas.")
+                else:
+                    st.warning("No hay datos para las keywords seleccionadas.")
+
             # Bar chart Top 10
             st.markdown("### Top 10 Competidores por Cuota de Visibilidad")
-            top_10 = sov_df.head(10)
+            top_10 = display_sov_df.head(10)
             fig_bar = px.bar(
                 top_10,
                 x='sov',
@@ -769,84 +806,59 @@ elif current_view == "monthly" and current_import_id:
                 st.plotly_chart(fig_pie, use_container_width=True)
 
         with t3:
-            st.subheader("🎯 Oportunidades de Crecimiento Rápido")
-            st.markdown("Keywords priorizadas por **Opportunity Score**: combinación de potencial de tráfico, volumen y dificultad.")
+            st.subheader("🚀 Matriz de Oportunidades")
             
-            # Column descriptions
-            with st.expander("ℹ️ ¿Qué significa cada columna?"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown(f"""
-                    **{COLUMN_HELP.get('Palabra Clave', '')}**  
-                    📍 **Pos. Actual**: {COLUMN_HELP.get('Pos. Actual', '')}  
-                    📊 **Búsquedas/mes**: {COLUMN_HELP.get('Búsquedas/mes', '')}  
-                    ⚡ **Dificultad**: {COLUMN_HELP.get('Dificultad', '')}  
-                    🎯 **Intención**: {COLUMN_HELP.get('Intención', '')}
-                    """)
-                with col2:
-                    st.markdown(f"""
-                    💰 **CPC**: {COLUMN_HELP.get('CPC', '')}  
-                    📈 **Uplift Tráfico**: {COLUMN_HELP.get('Uplift Tráfico (Top3)', '')}  
-                    💎 **Uplift Valor**: {COLUMN_HELP.get('Uplift Valor (€)', '')}  
-                    🏆 **Score**: {COLUMN_HELP.get('Score', '')}
-                    """)
-            
+            # Phase 6: Financial Metrics & Badges
+            st.markdown("""
+            > **Quick Wins**: Keywords en posiciones 4-10 (Striking Distance). 
+            > <span style="background:#FFA500;padding:2px 6px;border-radius:4px;font-size:10px;color:white;">EUR ESTIMADO</span> Las columnas de valor son proyecciones basadas en CPC.
+            """, unsafe_allow_html=True)
+
             if not opportunities.empty:
-                # Rename columns for display
-                rename_map = {
-                    'keyword': 'Palabra Clave',
-                    'volume': 'Búsquedas/mes',
-                    'difficulty': 'Dificultad',
-                    'intent': 'Intención',
-                    'cpc': 'CPC',
-                    'uplift_trafico': 'Uplift Tráfico (Top3)',
-                    'uplift_valor': 'Uplift Valor (€)',
-                    'opportunity_score': 'Score'
-                }
+                # Add financial columns if CPC exists
+                opp_display = opportunities.copy()
+                opp_display['CPC Est.'] = opp_display['cpc'].apply(lambda x: format_currency(x))
+                opp_display['Uplift Valor'] = opp_display.apply(
+                    lambda x: format_currency(x['uplift_value'] if pd.notnull(x.get('uplift_value')) else 0), axis=1
+                )
                 
-                # Add position column if exists
-                if pos_col in opportunities.columns:
-                    rename_map[pos_col] = 'Pos. Actual'
+                # Intent badge formatting function
+                def format_intent(val):
+                    if "(V)" in str(val):
+                        return f"✅ {val}"
+                    return f"🤖 {val}"
                 
-                opps_display = opportunities.copy()
+                opp_display['Intención'] = opp_display['intent'].apply(format_intent)
+
+                st.dataframe(
+                    opp_display[[
+                        'keyword', 'Posición Actual', 'volume', 'difficulty', 'Intención', 
+                        'CPC Est.', 'uplift_clicks', 'Uplift Valor', 'Score'
+                    ]].rename(columns={
+                        'keyword': 'Palabra Clave',
+                        'volume': 'Búsquedas/mes',
+                        'difficulty': 'Dificultad',
+                        'uplift_clicks': 'Uplift Tráfico'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
                 
-                # Format currency columns
-                if 'uplift_valor' in opps_display.columns:
-                    opps_display['uplift_valor'] = opps_display['uplift_valor'].apply(lambda x: f"{x:,.0f} €".replace(',', '.'))
-                if 'cpc' in opps_display.columns:
-                    opps_display['cpc'] = opps_display['cpc'].apply(lambda x: f"{x:.2f} €" if x > 0 else "N/D")
-                
-                # Format number columns
-                if 'uplift_trafico' in opps_display.columns:
-                    opps_display['uplift_trafico'] = opps_display['uplift_trafico'].apply(lambda x: f"{x:,.0f}".replace(',', '.'))
-                
-                # Add (V) or (S) label to intent for clarity
-                opps_display['intent'] = opps_display.apply(lambda x: f"{x['intent']} (V)" if x['origin_intent'] == 'Validada' else f"{x['intent']} (S)", axis=1)
-                
-                opps_display = opps_display.rename(columns=rename_map)
-                
-                # Ensure only display columns are shown
-                final_cols = ['Palabra Clave', 'Pos. Actual', 'Búsquedas/mes', 'Dificultad', 'Intención', 'CPC', 'Uplift Tráfico (Top3)', 'Uplift Valor (€)', 'Score']
-                opps_display = opps_display[[c for c in final_cols if c in opps_display.columns]]
-                
-                st.dataframe(opps_display, use_container_width=True, hide_index=True)
-                
-                # Export button
-                csv_data = opportunities.to_csv(index=False).encode('utf-8')
+                # Export Button
+                csv = opp_display.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="📥 Exportar Oportunidades (CSV)",
-                    data=csv_data,
+                    label="📥 Descargar Oportunidades (CSV)",
+                    data=csv,
                     file_name=f"oportunidades_{selected_domain}_{analysis_month}.csv",
                     mime="text/csv"
                 )
-            else:
-                st.info("No hay keywords en posición 4-10 para este mes.")
-
-            # --- VALIDATION MODULE ---
-            st.markdown("---")
-            with st.expander("📝 Gestionar Calidad: Validar Intención"):
+                
+                 # Intent Validation Module Integration
+                st.markdown("---")
                 render_intent_validation_module(df)
-
+                
+            else:
+                st.info("No se encontraron oportunidades 'Quick Win' (Pos 4-10) en este mes.")
         with t4:
             st.subheader("🧠 Inteligencia de Valor y Marca")
             
@@ -894,6 +906,56 @@ elif current_view == "monthly" and current_import_id:
                     color_discrete_sequence=['#1E88E5', '#D81B60']
                 )
                 st.plotly_chart(fig_brand, use_container_width=True)
+
+        with t5:
+            st.subheader("🔎 Keyword Deep Dive (Evolución por Palabra)")
+            st.markdown("Analiza la historia de una keyword específica a través de todos los meses cargados.")
+            
+            all_keywords = sorted(df['keyword'].unique())
+            selected_kw_dive = st.selectbox("Selecciona una palabra clave:", all_keywords)
+            
+            if selected_kw_dive:
+                import json
+                kw_history_df = database.get_keyword_history(project_id, selected_kw_dive)
+                
+                if not kw_history_df.empty:
+                    # Parse domain data json
+                    history_parsed = []
+                    for _, row in kw_history_df.iterrows():
+                        d_data = json.loads(row['data_json'])
+                        main_d_data = d_data.get(selected_domain, {})
+                        history_parsed.append({
+                            'Mes': row['month'],
+                            'Posición': main_d_data.get('pos', 101),
+                            'Tráfico Est.': main_d_data.get('clics', 0),
+                            'Valor (€)': main_d_data.get('media_value', 0),
+                            'CPC': row['cpc']
+                        })
+                    
+                    hp_df = pd.DataFrame(history_parsed)
+                    
+                    # Metrics Delta
+                    if len(hp_df) >= 2:
+                        last = hp_df.iloc[-1]
+                        prev = hp_df.iloc[-2]
+                        
+                        k1, k2, k3 = st.columns(3)
+                        
+                        # Position (Lower is better)
+                        pos_delta = last['Posición'] - prev['Posición']
+                        
+                        k1.metric("Posición Actual", f"{last['Posición']:.0f}", delta=f"{pos_delta:.0f}", delta_color="inverse")
+                        k2.metric("Tráfico Est.", f"{last['Tráfico Est.']:.0f}", delta=f"{last['Tráfico Est.'] - prev['Tráfico Est.']:.0f}")
+                        k3.metric("Valor (€)", f"{last['Valor (€)']:.2f}€", delta=f"{last['Valor (€)'] - prev['Valor (€)']:.2f}€")
+                    
+                    # Chart
+                    fig_kw = px.line(hp_df, x='Mes', y='Posición', markers=True, title=f"Evolución de Posición: {selected_kw_dive}")
+                    fig_kw['layout']['yaxis']['autorange'] = "reversed" # 1 is top
+                    st.plotly_chart(fig_kw, use_container_width=True)
+                    
+                    st.dataframe(hp_df, use_container_width=True)
+                else:
+                    st.warning("No hay histórico suficiente para esta keyword.")
 
 else:
     st.info("👋 Bienvenido. Selecciona un proyecto y un mes en la barra lateral para comenzar.")
