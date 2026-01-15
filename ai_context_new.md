@@ -11,10 +11,11 @@
 - ETL robusto (cabeceras dinámicas + normalización de números/monedas).
 - Módulos actuales:
   1) Resumen Ejecutivo (mensual): KPIs + texto IA + distribución rankings
-  2) Competencia: tabla + pie SoV
-  3) Oportunidades: striking distance (pos 4–10)
+  2) Competencia: tabla + pie SoV + HHI + Bar Chart
+  3) Oportunidades: striking distance + Opportunity Score + Intent Validation
   4) Inteligencia avanzada: valor/ahorro + marca vs genérico
-  5) Reporte Global: histórico MoM con métricas acumuladas + tabla histórica
+  5) Reporte Global: histórico MoM con IA insights + comparativa First vs Last
+  6) Seguridad: Zona de Gestión protegida por contraseña ("Webyseo@")
 - Shared URL read-only: `?import_id=...`
 
 ---
@@ -319,12 +320,13 @@ En Resumen Ejecutivo mostrar 3 insights automáticos (sin IA o con IA opcional):
 ✅ Badges + tooltips en todo lo estimado  
 ✅ Plan de Acción del Mes (3 pasos) implementado  
 ✅ Oportunidades con Uplift + Opportunity Score + orden por prioridad  
-✅ Deltas MoM en KPIs y competencia  
+✅ Deltas MoM en KPIs y competencia (ahora en pp)  
 ✅ Competencia con Bar chart + HHI + Δ MoM  
-✅ Calidad del dato visible y correcta  
-✅ Moneda EUR por defecto (configurable)  
+✅ Calidad del dato visible y correcta (incluyendo Intent Validada)  
+✅ Moneda EUR por defecto y estandarización de visibilidad (anti-escala)  
 ✅ Shared URL read-only funcional, persistente, sin zona admin  
-✅ No bloqueos con datasets grandes (caché + vectorización + límites en tablas)
+✅ Protección por contraseña en la Zona de Gestión  
+✅ Sistema de Enriquecimiento de Intención (Heurística + Persistencia) funcional  
 
 ---
 

@@ -8,9 +8,10 @@ Este documento sirve como referencia técnica y funcional para la auditoría, ma
 El dashboard está diseñado para ser ligero, reactivo y persistente.
 - **Frontend**: Streamlit + Custom CSS para una estética "Glassmorphism" premium.
 - **Backend / ETL**: Python 3.9+, Pandas para manipulación de datasets masivos.
-- **Base de Datos**: SQLite (Persistence Layer) gestionando 3 niveles: `Projects` > `Imports` > `Keyword Metrics`.
-- **Análisis Predictivo**: Google Gemini Pro para resúmenes ejecutivos condicionados por datos reales.
-- **Despliegue**: Compatible con Streamlit Cloud (requiere `secrets.toml` para `GOOGLE_API_KEY`).
+- **Base de Datos**: SQLite (Persistence Layer) gestionando 4 niveles: `Projects` > `Imports` > `Keyword Metrics` + la nueva tabla Global de `Keyword Intent`.
+- **Análisis Predictivo**: Google Gemini Pro para resúmenes ejecutivos mensuales e históricos (Global Report).
+- **Seguridad**: Control de acciones críticas mediante contraseña gestora ("Webyseo@").
+- **Despliegue**: Compatible con Streamlit Cloud.
 
 ---
 
@@ -21,6 +22,7 @@ La magia del sistema reside en su capacidad de procesar archivos de exportación
 - **Calculos Derivados**:
     - `Clics Estimados = Volumen * CTR(Posición)`.
     - `Media Value = Clics Estimados * CPC`.
+- **Endurecimiento de Métricas (`utils_metrics.py`)**: Centraliza el cálculo de visibilidad para evitar errores de escala, aplicando guardas anti-multiplicación y estandarizando el delta en puntos porcentuales (pp).
 - **Normalización**: Limpieza automática de €, $, %, decimales europeos (`,`) y americanos (`.`).
 
 ---
@@ -29,7 +31,8 @@ La magia del sistema reside en su capacidad de procesar archivos de exportación
 Maneja el ciclo de vida de los datos:
 1. **Projects**: Registra el dominio principal y nombre del cliente.
 2. **Imports**: Vincula cada archivo CSV a un mes (`YYYY-MM`) y almacena el texto del reporte generado por la IA.
-3. **Keyword Metrics**: Almacenamiento granular de cada palabra clave. Los datos de competidores se guardan en un campo `data_json` para permitir comparativas N-dimensionales sin alterar el esquema SQL.
+3. **Keyword Metrics**: Almacenamiento granular de cada palabra clave. Los datos de competidores se guardan en un campo `data_json` para permitir comparativas N-dimensionales.
+4. **Keyword Intent (Persistencia Global)**: Almacena las intenciones de búsqueda validadas manualmente. Estas prevalecen sobre las sugerencias automáticas y son persistentes entre diferentes meses de importación.
 
 ---
 
@@ -48,21 +51,28 @@ Maneja el ciclo de vida de los datos:
 - **Quick Wins**: Filtro automático de keywords en posiciones 4 a 10 con alto volumen.
 - **Estrategia**: Prioriza los esfuerzos de contenido donde el impacto de subir 1-3 posiciones es máximo.
 
-### 4. Resumen Global (Visión Histórica)
-- **Tendencia MoM**: Gráficas de línea y área que muestran la cuota de mercado y el tráfico acumulado a lo largo de todos los meses subidos.
-- **Tabla Maestra**: Desglose mensual de KPIs para exportación o revisión de auditoría.
+### 4. Enriquecimiento de Intención de Búsqueda (`intent_rules.py`)
+- **Heurística Automática**: Clasifica keywords en Informativa, Transaccional, Comercial o Navegacional basándose en patrones léxicos y modificadores locales.
+- **Validación Manual (V)**: Módulo de edición interactiva directo en el dashboard para corregir sugerencias. Las keywords validadas se marcan con `(V)` y las automáticas con `(S)`.
+
+### 5. Resumen Global (Visión Histórica PRO)
+- **Tendencia MoM**: Gráficas de línea y área que muestran la cuota de mercado y el tráfico acumulado.
+- **AI Global Insights**: Análisis estratégico de tendencias históricas comparando el primer mes contra el último mes cargado.
+- **Tabla Maestra**: Desglose mensual de KPIs para exportación.
 
 ---
 
 ## ⚠️ 5. Zona de Gestión y Seguridad
-- **Regeneración de IA**: Permite borrar y volver a generar el reporte de IA si se detectan errores o si el prompt ha sido actualizado.
-- **Borrado Selectivo**: Posibilidad de eliminar meses específicos para corregir subidas erróneas.
-- **Shared URLs**: Generación de enlaces de solo lectura (`?import_id=...`) para compartir con clientes sin exponer la zona de edición o subida de datos.
+- **Control de Acciones Críticas**: Las funciones de "Regenerar Análisis IA" y "Borrar Mes" están protegidas por la contraseña `Webyseo@` para evitar consumo innecesario de API o pérdida accidental de datos.
+- **Shared URLs**: Generación de enlaces de solo lectura (`?import_id=...`) para compartir con clientes.
+- **Branding**: Personalización visual con logo de Radiofònics y estética premium adaptada.
 
 ---
 
 ## 🛠️ Notas para Auditoría de IA
 Al auditar este código, se debe prestar especial atención a:
 - La robustez de `etl.py` ante cabeceras de CSV desconocidas.
-- La eficiencia de la persistencia en `database.py` al manejar batches de miles de palabras clave.
+- La lógica de `utils_metrics.py` para asegurar que el SoV (Visibilidad) nunca sufra errores de escala.
+- La persistencia de `database.py` al manejar batches de miles de palabras clave y la integridad de la tabla de intenciones.
+- El refinamiento de las reglas en `intent_rules.py` para mejorar la precisión de las sugerencias automáticas.
 - La coherencia de las fechas en el prompt de la IA en `app.py`.

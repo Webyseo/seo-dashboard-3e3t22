@@ -1,58 +1,63 @@
-# SEO Executive Dashboard
+# SEO Intelligence Dashboard (Streamlit PRO)
 
-Aplicación web profesional para el análisis de rendimiento SEO, diseñada para agencias y consultores. Permite visualizar KPIs, comparar competidores y generar informes ejecutivos en PDF.
+Plataforma avanzada de inteligencia SEO diseñada para transformar datos crudos de herramientas como Semrush o Sistrix en reportes ejecutivos accionables.
 
-## 🚀 Instalación y Puesta en Marcha
+---
+
+## 🌟 Funcionalidades Principales
+
+### 📈 Análisis Ejecutivo PRO
+- **Share of Voice (SoV) Hardened**: Cuota de visibilidad calculada con algoritmos de endurecimiento para evitar errores de escala.
+- **Deltas MoM (pp)**: Comparativas mensuales expresadas en puntos porcentuales para máxima precisión profesional.
+- **Resumen IA**: Integración con Google Gemini Pro para generar análisis estratégicos mensuales.
+
+### 🧠 Enriquecimiento de Intención de Búsqueda
+- **Heurística Automática**: Clasificación de keywords en Informativa, Transaccional, Comercial o Navegacional.
+- **Validación Persistente**: Módulo de validación manual integrado que guarda tus decisiones en una base de datos global.
+- **Identificadores Visuales**: Diferenciación clara entre intenciones sugeridas `(S)` y validadas `(V)`.
+
+### 🌍 Reporte Global Histórico
+- **Tendencia MoM**: Evolución de KPIs a lo largo de todos los meses de importación.
+- **AI Global Insights**: Análisis estratégico de tendencias históricas (Primer mes vs Último mes).
+- **KPIs Acumulados**: Tráfico total capturado y ahorro económico (€) generado por el SEO.
+
+### 🎯 Matriz de Oportunidades
+- **Opportunity Score**: Priorización basada en Uplift de Clics, Volumen, Dificultad y CPC.
+- **Striking Distance**: Enfoque en keywords en posiciones 4-10 listas para saltar al Top 3.
+
+---
+
+## 🔒 Seguridad y Gestión
+- **Zona de Gestión Protegida**: Acciones de borrado o regeneración de IA requieren la contraseña maestra (`Webyseo@`).
+- **Data Quality Panel**: Monitorización del progreso de validación de intención y cobertura de datos (CPC, etc.).
+- **Shared URLs**: Generación de enlaces "Solo Lectura" para compartir con clientes finales.
+
+---
+
+## 🛠 Instalación y Uso
 
 ### Prerrequisitos
-- Node.js 18+ instalado.
-- Un archivo CSV mensual con los datos de exportación.
+- Python 3.9+
+- Google API Key (para funcionalidades de IA)
 
-### Pasos Iniciales
-1.  Clona el repositorio o descomprime el proyecto.
-2.  Instala las dependencias:
-    ```bash
-    npm install
-    ```
-3.  Inicializa la base de datos (SQLite):
-    ```bash
-    npx prisma db push
-    ```
-4.  Inicia el servidor de desarrollo:
-    ```bash
-    npm run dev
-    ```
-5.  Abre [http://localhost:3000](http://localhost:3000) en tu navegador.
+### Configuración
+1. Instala las dependencias:
+   ```bash
+   pip install -r streamlit_dashboard/requirements.txt
+   ```
+2. Inicia la aplicación:
+   ```bash
+   streamlit run streamlit_dashboard/app.py
+   ```
 
-## 📊 Guía de Uso
+### Estructura del Proyecto
+- `app.py`: Interfaz principal y orquestación.
+- `database.py`: Capa de persistencia SQLite.
+- `etl.py`: Lógica de procesamiento y cálculo SEO.
+- `intent_rules.py`: Motor de inferencia de intención de búsqueda.
+- `utils_metrics.py`: Estandarización de cálculos y formateo.
 
-### 1. Crear Proyecto
-Al iniciar, verás la pantalla "Your Projects". Crea un nuevo proyecto para tu cliente (ej. "Radiofonics"). Esto te llevará al dashboard vacío del proyecto.
+---
 
-### 2. Importar Datos (CSV)
-En la pestaña "Data Quality" o en el inicio si no hay datos:
-1.  Selecciona el **Mes** del reporte (ej. "Octubre 2023").
-2.  Sube el archivo CSV.
-3.  El sistema detectará automáticamente las columnas y los dominios de la competencia.
-
-**Nota**: El sistema maneja valores "N/D", porcentajes y monedas automáticamente.
-
-### 3. Interpretar KPIs (Executive Summary)
--   **Share of Voice (SoV)**: Tu visibilidad comparada con la visibilidad total del mercado (suma de todos los dominios rastreados).
--   **Striking Distance**: Palabras clave en posiciones 4-10 (Página 1 baja), donde una pequeña optimización puede generar gran impacto.
--   **Top 3 / 10 / 20**: Cantidad de palabras clave en estos rangos.
-
-### 4. Pestañas de Análisis
--   **Competition**: Tabla comparativa con competidores (SoV, Visibilidad, Posición Media).
--   **Rankings**: Distribución de palabras clave por rangos de posición.
--   **Groups**: Rendimiento agrupado por "Grupo Palabra Clave".
--   **Opportunities**: Listado automático de "Quick Wins" (Pos 4-10 con alto volumen).
-
-### 5. Exportar Informe
-En la pestaña "Executive Summary", pulsa el botón **"Export PDF"**. Esto generará un archivo PDF profesional con los KPIs principales y los insights automáticos, listo para enviar por email.
-
-## 🛠 Comandos Útiles
-
--   `npm run build`: Construir para producción.
--   `npx prisma studio`: Ver la base de datos visualmente.
--   `npx prisma db push`: Actualizar esquema de BD si haces cambios.
+## 🛡 Notas de Auditoría
+El sistema utiliza una base de datos SQLite persistente para mantener la integridad entre sesiones. Todos los cálculos de tráfico dependen de una curva CTR configurable en el código. Los valores de moneda están localizados a formato europeo (€).
