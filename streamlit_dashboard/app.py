@@ -197,20 +197,19 @@ def get_ai_analysis(import_id, summary_stats, opportunities_sample, analysis_mon
         return "⚠️ Configura una API Key válida para habilitar el reporte de IA."
     
     try:
-        # Upgrade to Gemini 1.5 Flash (Client Request Phase 6)
-        # UPDATE: User requested priority for gemini-3-flash-preview
-        models_priority = ['gemini-3-flash-preview', 'gemini-2.0-flash-exp', 'gemini-1.5-flash']
-        selected_model = 'gemini-1.5-flash' # Default fallback
+        # Upgrade to Gemini 3 Flash (User Request)
+        # We forcefully try gemini-3-flash-preview first
+        selected_model = 'gemini-3-flash-preview'
 
         try:
+            # We still list models just in case we need to fallback, but we default to 3-flash
             available_models = [m.name for m in genai.list_models()]
-            # Clean available names (remove 'models/')
             available_names = [n.replace('models/', '') for n in available_models]
             
-            for m in models_priority:
-                if m in available_names:
-                    selected_model = m
-                    break
+            # If 3-flash is not explicitly in list, we STILL try it (it might be preview-hidden)
+            # But if we want to be safe, we could check. 
+            # Per instruction: "Force utilize gemini-3-flash-preview"
+            pass 
         except Exception as e:
             print(f"Error listing models: {e}")
             
@@ -254,7 +253,7 @@ def get_ai_analysis(import_id, summary_stats, opportunities_sample, analysis_mon
         **Tono**: Directivo, estratégico, orientado a la acción. NO uses jerga técnica innecesaria. NO inventes datos.
         """
         
-        with st.spinner('🧠 Analizando estrategia de marketing (Gemini 1.5 Flash)...'):
+        with st.spinner('🧠 Analizando estrategia de marketing (Gemini 3 Flash)...'):
             response = model.generate_content(prompt)
             report_text = response.text
             # Save to DB
@@ -275,16 +274,8 @@ def get_global_ai_analysis(project_id, history_stats_str):
         return st.session_state[cache_key]
     
     try:
-        models = ['gemini-2.0-flash-exp', 'gemini-1.5-flash']
-        selected_model = 'gemini-1.5-flash'
-        try:
-            available = [m.name for m in genai.list_models()]
-            for m in models:
-                if any(m in a for a in available):
-                    selected_model = m
-                    break
-        except: pass
-            
+        selected_model = 'gemini-3-flash-preview'
+        # We skip the list check to force the preview model
         model = genai.GenerativeModel(selected_model)
         
         prompt = f"""
