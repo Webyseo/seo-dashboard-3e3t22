@@ -1,4 +1,150 @@
 import { prisma } from '@/lib/db'
+import { classifyIntent, calculateUplift, recommendAction } from './business-logic'
+
+export interface MasterEvolutionRow {
+    keyword: string
+    intent: string
+    position: number
+    delta: number
+    trend: number[]
+    value: number
+    action: string
+    url: string
+}
+
+export async function getMasterEvolutionData(importId: string, domain: string): Promise<MasterEvolutionRow[]> {
+    // 1. Get current import to know project/date
+    const currentImport = await prisma.import.findUnique({
+        where: { id: importId },
+        include: { project: true }
+    })
+    if (!currentImport) return []
+
+    // 2. Find previous import for delta (simple approach: sort by date/label)
+    // We assume imports are monthly.
+    const allImports = await prisma.import.findMany({
+        where: { projectId: currentImport.projectId },
+        orderBy: { monthLabel: 'desc' },
+        select: { id: true, monthLabel: true }
+    })
+
+    // Find index of current, then get next one (which is previous in time)
+    const currentIndex = allImports.findIndex(i => i.id === importId)
+    const prevImport = currentIndex >= 0 && currentIndex < allImports.length - 1 ? allImports[currentIndex + 1] : null
+
+    // 3. Get all rankings for current import
+    const currentRankings = await prisma.domainRanking.findMany({
+        where: { importId, domain },
+        include: {
+            keyword: {
+                include: { metrics: { where: { importId } } }
+            }
+        }
+    })
+
+    // 4. Get previous rankings for Delta map
+    const prevRankingsMap = new Map<string, number>()
+    if (prevImport) {
+        const prevRankings = await prisma.domainRanking.findMany({
+            where: { importId: prevImport.id, domain },
+            select: { keywordId: true, position: true }
+        })
+        prevRankings.forEach(r => {
+            if (r.position) prevRankingsMap.set(r.keywordId, r.position)
+        })
+    }
+
+    // 5. Get History for Sparklines (Last 3 imports including current)
+    // We can fetch rankings for specific keyword IDs in last 3 imports.
+    // For optimization, maybe just fetch all rankings for these imports/domain?
+    // Let's take last 3 imports from allImports list.
+    const historyImports = allImports.slice(currentIndex, currentIndex + 3).map(i => i.id)
+
+    // Fetch all rankings for these imports
+    const historyRankings = await prisma.domainRanking.findMany({
+        where: {
+            importId: { in: historyImports },
+            domain
+        },
+        select: { importId: true, keywordId: true, position: true }
+    })
+
+    // Map: KeywordId -> ImportId -> Position
+    const historyMap = new Map<string, Map<string, number>>()
+    for (const r of historyRankings) {
+        if (!historyMap.has(r.keywordId)) historyMap.set(r.keywordId, new Map())
+        if (r.position) historyMap.get(r.keywordId)!.set(r.importId, r.position)
+    }
+
+    // 6. Build Result
+    const rows: MasterEvolutionRow[] = currentRankings.map(r => {
+        const keywordText = r.keyword.text
+        const currentPos = r.position || 101 // heavy penalty if null
+
+        // Intent
+        const intent = classifyIntent(keywordText)
+
+        // Delta
+        const prevPos = prevRankingsMap.get(r.keywordId)
+        let delta = 0
+        if (prevPos) {
+            delta = prevPos - currentPos // e.g. Prev 10, Curr 5 => Delta +5 (Improved)
+        } else {
+            delta = 0 // New keyword
+        }
+
+        // Trend (Sparkline) - Order: Oldest to Newest
+        // historyImports is Descending (Current, Prev, PrevPrev)
+        // We want [PrevPrev, Prev, Current]
+        const trend: number[] = []
+        for (let i = historyImports.length - 1; i >= 0; i--) {
+            const impId = historyImports[i]
+            const pos = historyMap.get(r.keywordId)?.get(impId) || 0 // 0 means not ranked/found
+            // Sparklines usually look better if we inverse rank or just show rank.
+            // Requirement says "Trend (Sparkline)". 
+            // If we use LineChart, y-axis can be reversed.
+            trend.push(pos)
+        }
+
+        // Value (Uplift)
+        const metric = r.keyword.metrics[0]
+        const volume = metric?.volume || 0
+        const cpc = metric?.cpcAvg || 0 // use avg or min? default avg.
+        const value = calculateUplift(currentPos, volume, cpc)
+
+        // Action
+        // We need 'trend' direction for recommendAction.
+        // Simple trend logic: improved or declined from prev month?
+        let trendDir: 'up' | 'down' | 'stable' = 'stable'
+        if (delta > 0) trendDir = 'up'
+        else if (delta < 0) trendDir = 'down'
+
+        const action = recommendAction(currentPos, trendDir, intent)
+
+        return {
+            keyword: keywordText,
+            intent,
+            position: currentPos,
+            delta,
+            trend,
+            value,
+            action,
+            url: r.url || ''
+        }
+    })
+
+    // Sort by Striking Distance (Pos 4-10) then Value
+    return rows.sort((a, b) => {
+        const aStriking = a.position >= 4 && a.position <= 10
+        const bStriking = b.position >= 4 && b.position <= 10
+
+        if (aStriking && !bStriking) return -1
+        if (!aStriking && bStriking) return 1
+
+        return b.value - a.value
+    })
+}
+
 
 export interface ExecutiveSummaryData {
     totalVisibility: number
