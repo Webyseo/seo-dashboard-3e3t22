@@ -7,6 +7,8 @@ import intent_rules
 import utils_metrics
 import plotly.express as px
 from datetime import datetime
+import os
+import time
 
 # Initialize Database
 database.init_db()
@@ -338,7 +340,11 @@ def get_global_ai_analysis(project_id, history_stats_str):
 
 # --- SIDEBAR & NAVIGATION ---
 with st.sidebar:
-    st.image("assets/logo_radiofonics.png", width=120)
+    # Use absolute path relative to script to avoid path issues in Streamlit Cloud
+    current_dir = os.path.dirname(__file__)
+    logo_path = os.path.join(current_dir, "assets", "logo_radiofonics.png")
+    if os.path.exists(logo_path):
+        st.image(logo_path, width=120)
     st.title("SEO Intelligence")
     
     # Check for Shared View via URL Params (backward compatible)
