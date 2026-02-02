@@ -47,48 +47,60 @@ def parse_csv_data(file):
     domain_map = {} # { 'domain.com': { 'position': 'Posición [domain.com]', 'visibility': 'Visibilidad ...' } }
     
     for col in cols:
+        col_lower = col.lower()
         # Check for Visibility column (Anchor)
-        # Format can be "Visibilidad [domain.com]" or "Visibilidad domain.com"
-        if 'Visibilidad' in col:
+        if 'visibilidad' in col_lower or 'visibility' in col_lower:
             # Extract domain 
-            # 1. Try brackets
-            match_brackets = re.search(r'Visibilidad\s*\[(.*?)\]', col)
+            # 1. Try brackets: Visibilidad [domain.com]
+            match_brackets = re.search(r'(Visibilidad|Visibility)\s*\[(.*?)\]', col, re.IGNORECASE)
             if match_brackets:
-                domain = match_brackets.group(1)
+                domain = match_brackets.group(2)
             else:
-                # 2. Try simple suffix if it starts with Visibilidad
-                if col.startswith('Visibilidad '):
-                    domain = col.replace('Visibilidad ', '').strip()
+                # 2. Try simple suffix if it starts with Visibilidad/Visibility
+                if col_lower.startswith('visibilidad '):
+                    domain = col[len('visibilidad '):].strip()
+                elif col_lower.startswith('visibility '):
+                    domain = col[len('visibility '):].strip()
                 else:
-                    continue # Not a visibility column we recognize
+                    # 3. Try to find the domain by splitting
+                    parts = col.split()
+                    if len(parts) >= 2:
+                        domain = parts[-1].strip('[]')
+                    else:
+                        continue
             
             if domain not in domain_map: domain_map[domain] = {}
             domain_map[domain]['visibility'] = col
             
             # Now try to find matching Position and Traffic columns for this domain
-            # We look for columns that contain the domain name and "Posición" or "Tráfico"
-            
             # Position candidates
-            # "Posición [domain]", "Posición en Google domain", "Posición domain"
             possible_pos_cols = [
                 f"Posición [{domain}]",
+                f"Position [{domain}]",
                 f"Posición en Google {domain}", 
-                f"Posición {domain}"
+                f"Position in Google {domain}",
+                f"Posición {domain}",
+                f"Position {domain}",
+                f"Ranking [{domain}]"
             ]
             for pcol in possible_pos_cols:
-                if pcol in cols:
-                    domain_map[domain]['position'] = pcol
+                # Case insensitive check
+                match = next((c for c in cols if c.lower() == pcol.lower()), None)
+                if match:
+                    domain_map[domain]['position'] = match
                     break
             
             # Traffic candidates
-            # "Tráfico [{domain}]", "Tráfico {domain}"
             possible_traf_cols = [
                 f"Tráfico [{domain}]",
-                f"Tráfico {domain}"
+                f"Traffic [{domain}]",
+                f"Tráfico {domain}",
+                f"Traffic {domain}"
             ]
             for tcol in possible_traf_cols:
-                if tcol in cols:
-                    domain_map[domain]['traffic'] = tcol
+                match = next((c for c in cols if c.lower() == tcol.lower()), None)
+                if match:
+                    domain_map[domain]['traffic'] = match
                     break
 
     # --- Robust Column Detection for Standard Metrics ---
@@ -216,15 +228,21 @@ def calculate_sov(df, domain_map, main_domain):
             'sov': sov
         })
         
+    if not sov_data:
+        return pd.DataFrame(columns=['domain', 'visibility_score', 'sov'])
+        
     return pd.DataFrame(sov_data).sort_values('sov', ascending=False)
 
 
 def get_striking_distance(df, domain_map, main_domain):
     """
-    Returns keywords where position is 4-10 with PRO metrics:
-    - Uplift Tráfico Top3
-    - Uplift Valor
+    P0.3: Returns keywords in positions 4-10 with PRO metrics:
+    - Uplift Tráfico (clicks ganados si sube a Top3)
+    - Uplift Valor (€ si CPC disponible)
     - Opportunity Score (0-100)
+    - Motivo (explicación humana del potencial)
+    
+    Ordering: uplift_valor desc -> uplift_clicks desc -> intent (Commercial first)
     """
     if main_domain not in domain_map: 
         return pd.DataFrame()
@@ -238,27 +256,45 @@ def get_striking_distance(df, domain_map, main_domain):
     if opportunities.empty:
         return pd.DataFrame()
     
-    # CTR Curve (same as in parse_csv_data)
-    ctr_curve = {
+    # CTR Curve (P0.3: Baseline table as constant)
+    CTR_CURVE = {
         1: 0.30, 2: 0.15, 3: 0.10, 4: 0.07, 5: 0.05,
         6: 0.04, 7: 0.03, 8: 0.025, 9: 0.02, 10: 0.018
     }
     
-    # Average CTR for Top 3
-    ctr_top3 = (ctr_curve[1] + ctr_curve[2] + ctr_curve[3]) / 3
+    # Target: Top 3 (average CTR)
+    CTR_TARGET = (CTR_CURVE[1] + CTR_CURVE[2] + CTR_CURVE[3]) / 3  # ~18.3%
     
-    # Calculate Uplift Tráfico
-    opportunities['uplift_trafico'] = opportunities.apply(
-        lambda x: x['volume'] * (ctr_top3 - ctr_curve.get(int(x[pos_col]), 0)) if x['volume'] > 0 else 0,
-        axis=1
-    )
+    # Calculate Uplift Tráfico (clicks)
+    def calc_uplift(row):
+        current_pos = int(row[pos_col])
+        current_ctr = CTR_CURVE.get(current_pos, 0)
+        return row['volume'] * (CTR_TARGET - current_ctr) if row['volume'] > 0 else 0
     
-    # Calculate Uplift Valor (if CPC available)
-    has_cpc = 'cpc' in opportunities.columns and (opportunities['cpc'] > 0).any()
+    opportunities['uplift_clicks'] = opportunities.apply(calc_uplift, axis=1).round(0).astype(int)
+    
+    # Calculate Uplift Valor (€) - P0.3: Null if no CPC
+    has_cpc = 'cpc' in opportunities.columns
     if has_cpc:
-        opportunities['uplift_valor'] = opportunities['uplift_trafico'] * opportunities['cpc']
+        opportunities['uplift_value'] = opportunities.apply(
+            lambda x: x['uplift_clicks'] * x['cpc'] if x['cpc'] > 0 else None,
+            axis=1
+        )
     else:
-        opportunities['uplift_valor'] = 0
+        opportunities['uplift_value'] = None
+    
+    # P0.3: Motivo column (human-readable explanation)
+    def generate_reason(row):
+        pos = int(row[pos_col])
+        clicks = int(row['uplift_clicks'])
+        if row.get('uplift_value') and row['uplift_value'] > 0:
+            return f"pos{pos}→Top3 = +{clicks} clics (~{row['uplift_value']:.0f}€)"
+        elif row.get('cpc', 0) == 0:
+            return f"pos{pos}→Top3 = +{clicks} clics (Sin estimación € - CPC missing)"
+        else:
+            return f"pos{pos}→Top3 = +{clicks} clics est."
+    
+    opportunities['motivo'] = opportunities.apply(generate_reason, axis=1)
     
     # Opportunity Score (0-100) with adaptive weights
     def normalize(series):
@@ -268,47 +304,74 @@ def get_striking_distance(df, domain_map, main_domain):
         return (series - series.min()) / (series.max() - series.min())
     
     has_kd = 'difficulty' in opportunities.columns and (opportunities['difficulty'] > 0).any()
+    has_cpc_data = has_cpc and (opportunities['cpc'] > 0).any()
     
     # Adaptive scoring based on available data
-    if has_cpc and has_kd:
-        # Full scoring
+    if has_cpc_data and has_kd:
         score = (
-            normalize(opportunities['uplift_trafico']) * 0.55 +
+            normalize(opportunities['uplift_clicks']) * 0.55 +
             normalize(opportunities['volume']) * 0.20 +
-            normalize(opportunities['cpc']) * 0.15 +
+            normalize(opportunities['cpc'].fillna(0)) * 0.15 +
             normalize(1 / (opportunities['difficulty'] + 1)) * 0.10
         ) * 100
-    elif has_cpc:
-        # Without KD
+    elif has_cpc_data:
         score = (
-            normalize(opportunities['uplift_trafico']) * 0.65 +
+            normalize(opportunities['uplift_clicks']) * 0.65 +
             normalize(opportunities['volume']) * 0.25 +
-            normalize(opportunities['cpc']) * 0.10
+            normalize(opportunities['cpc'].fillna(0)) * 0.10
         ) * 100
     elif has_kd:
-        # Without CPC
         score = (
-            normalize(opportunities['uplift_trafico']) * 0.70 +
+            normalize(opportunities['uplift_clicks']) * 0.70 +
             normalize(opportunities['volume']) * 0.20 +
             normalize(1 / (opportunities['difficulty'] + 1)) * 0.10
         ) * 100
     else:
-        # Minimal scoring
         score = (
-            normalize(opportunities['uplift_trafico']) * 0.70 +
+            normalize(opportunities['uplift_clicks']) * 0.70 +
             normalize(opportunities['volume']) * 0.30
         ) * 100
     
     opportunities['opportunity_score'] = score.round(1)
     
+    # P0.3: Intent priority for secondary sorting (Commercial > Mixta > Informativa)
+    intent_priority = {
+        'Comercial': 0, 'Commercial': 0, 'Transaccional': 1, 
+        'Mixta/Por validar': 2, 'Mixta': 2, 
+        'Informativa': 3, 'Navegacional': 4
+    }
+    opportunities['intent_priority'] = opportunities.get('intent', 'Mixta').map(
+        lambda x: intent_priority.get(x, 2)
+    )
+    
     # Select display columns
     base_cols = ['keyword', pos_col, 'volume']
-    optional_cols = ['difficulty', 'intent', 'cpc', 'uplift_trafico', 'uplift_valor', 'opportunity_score']
+    optional_cols = ['difficulty', 'intent', 'cpc', 'uplift_clicks', 'uplift_value', 'motivo', 'opportunity_score']
     
     display_cols = base_cols + [c for c in optional_cols if c in opportunities.columns]
     
-    # Sort by Opportunity Score descending
-    return opportunities[display_cols].sort_values('opportunity_score', ascending=False)
+    # P0.3: Ordering by impact
+    # 1) uplift_value desc (if exists and not null)
+    # 2) uplift_clicks desc
+    # 3) intent_priority asc (Commercial first)
+    sort_cols = ['opportunity_score']
+    sort_ascending = [False]
+    
+    if 'uplift_value' in opportunities.columns:
+        # Fill NaN with -1 for sorting (so CPC-missing goes to bottom within same score)
+        opportunities['_sort_value'] = opportunities['uplift_value'].fillna(-1)
+        sort_cols = ['_sort_value', 'uplift_clicks', 'intent_priority']
+        sort_ascending = [False, False, True]
+    
+    result = opportunities.sort_values(sort_cols, ascending=sort_ascending)
+    
+    # Clean up temp column
+    if '_sort_value' in result.columns:
+        result = result.drop(columns=['_sort_value'])
+    if 'intent_priority' in result.columns:
+        result = result.drop(columns=['intent_priority'])
+    
+    return result[display_cols]
 
 def calculate_hhi(sov_df):
     """

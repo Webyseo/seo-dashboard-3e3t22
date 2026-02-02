@@ -17,6 +17,12 @@ st.set_page_config(
     page_icon="🚀",
     layout="wide"
 )
+# Helper for rerun compatibility
+def safe_rerun():
+    try:
+        st.rerun()
+    except AttributeError:
+        st.experimental_rerun()
 
 # ============================================
 # PRO CONSTANTS - Naming & Formatting
@@ -80,7 +86,10 @@ def format_number(value):
     return f"{value:,.0f}".replace(',', '.')
 
 def render_data_quality_panel(df, domain_map):
-    """Muestra panel de calidad de datos"""
+    """
+    Muestra panel de calidad de datos como SEMÁFORO operativo (P0.2).
+    Returns: cpc_coverage (float) for gating economic metrics elsewhere.
+    """
     cpc_coverage = (df['cpc'] > 0).sum() / len(df) * 100 if len(df) > 0 else 0
     
     # Calculate validated intent percentage
@@ -89,7 +98,35 @@ def render_data_quality_panel(df, domain_map):
     
     num_competitors = len(domain_map)
     
-    st.info(f"📊 **Calidad de datos**: CPC {cpc_coverage:.0f}% | Intent Validada {intent_valid_pct:.0f}% | Competidores {num_competitors} dominios")
+    # Semáforo logic (P0.2)
+    if cpc_coverage >= 70:
+        color = "#2E7D32"  # Green
+        icon = "🟢"
+        label = "Alta"
+        warning_msg = None
+    elif cpc_coverage >= 40:
+        color = "#FFA000"  # Amber
+        icon = "🟡"
+        label = "Media"
+        warning_msg = "Métricas económicas con confianza media."
+    else:
+        color = "#C62828"  # Red
+        icon = "🔴"
+        label = "Baja"
+        warning_msg = "⚠️ Métricas económicas orientativas (CPC incompleto). Prioriza SoV/posición."
+    
+    # Render semaphore
+    st.markdown(
+        f'<div style="padding:10px;border-radius:8px;background:linear-gradient(135deg, {color}22, {color}11);border-left:4px solid {color};">'
+        f'{icon} <b>Calidad de datos</b>: CPC <b>{cpc_coverage:.0f}%</b> ({label}) | Intent Validada {intent_valid_pct:.0f}% | Competidores {num_competitors} dominios'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+    
+    if warning_msg:
+        st.warning(warning_msg)
+    
+    return cpc_coverage  # Return for gating logic
 
 def render_intent_validation_module(df):
     """Módulo para validar manualmente la intención de búsqueda"""
@@ -123,11 +160,10 @@ def render_intent_validation_module(df):
                 required=True
             )
         },
-        hide_index=True,
-        use_container_width=True,
         key="intent_editor"
     )
     
+
     if st.button("Guardar Validaciones"):
         # Detect rows that changed
         changed_rows = edited_df[edited_df['Nueva Intención'] != edited_df['Intención Sugerida']]
@@ -137,7 +173,7 @@ def render_intent_validation_module(df):
                 database.upsert_keyword_intent(kw_norm, row['Palabra Clave'], row['Nueva Intención'])
             st.success(f"✅ Se han validado {len(changed_rows)} keywords.")
             time.sleep(1)
-            st.rerun()
+            safe_rerun()
         else:
             st.warning("No has realizado ningún cambio en la columna 'Nueva Intención'.")
 
@@ -302,11 +338,14 @@ def get_global_ai_analysis(project_id, history_stats_str):
 
 # --- SIDEBAR & NAVIGATION ---
 with st.sidebar:
-    st.image("streamlit_dashboard/assets/logo_radiofonics.png", width=120)
+    st.image("assets/logo_radiofonics.png", width=120)
     st.title("SEO Intelligence")
     
-    # Check for Shared View via URL Params
-    params = st.query_params
+    # Check for Shared View via URL Params (backward compatible)
+    try:
+        params = st.query_params  # Streamlit >= 1.30
+    except AttributeError:
+        params = st.experimental_get_query_params()  # Older versions
     shared_import_id = params.get("import_id")
     
     if shared_import_id:
@@ -327,7 +366,7 @@ with st.sidebar:
             if st.button("Crear Proyecto"):
                 if new_p_name and new_p_domain:
                     database.save_project(new_p_name, new_p_domain)
-                    st.rerun()
+                    safe_rerun()
             st.stop()
         
         selected_p_row = st.selectbox("Seleccionar Proyecto", projects_df.to_dict('records'), format_func=lambda x: x['name'])
@@ -372,10 +411,12 @@ with st.sidebar:
                 if err:
                     st.error(err)
                 else:
+                    if not ret['domains']:
+                        st.warning("⚠️ No se detectaron columnas de 'Visibilidad'. Las gráficas de cuota de mercado (SoV) estarán vacías. Verifica el formato del CSV.")
                     success = database.save_import_data(project_id, new_month, uploaded_file.name, ret['df'], ret['domains'])
                     if success:
                         st.success("¡Datos guardados!")
-                        st.rerun()
+                        safe_rerun()
                     else:
                         st.error("Error al guardar en BD.")
 
@@ -395,6 +436,12 @@ if current_view == "global":
     st.markdown("Comparativa histórica de todos los datos cargados para este proyecto.")
     
     all_imports = database.get_project_imports(project_id)
+    n_meses_global = len(all_imports)  # P0.4: Track historical depth
+    
+    # P0.4: Show historical depth in global view
+    if not all_imports.empty:
+        last_month_global = all_imports.iloc[0]['month']
+        st.caption(f"📊 **Histórico**: {n_meses_global} meses | Último mes cargado: {last_month_global}")
     
     if all_imports.empty:
         st.info("Sube más datos mensuales para desbloquear la vista histórica.")
@@ -405,7 +452,8 @@ if current_view == "global":
             df_month, d_map = database.load_import_data(imp['id'])
             if not df_month.empty:
                 sov_df = etl.calculate_sov(df_month, d_map, main_domain)
-                sov = sov_df[sov_df['domain'] == main_domain]['sov'].values[0] if not sov_df.empty else 0
+                sov_rows = sov_df[sov_df['domain'] == main_domain]
+                sov = sov_rows['sov'].values[0] if not sov_rows.empty else 0
                 history_data.append({
                     'Mes': imp['month'],
                     'SoV': sov,
@@ -460,6 +508,10 @@ if current_view == "global":
             st.markdown("---")
             st.markdown("### 📈 Evolución Histórica")
             
+            # P0.4: Historical warning in trend charts
+            if n_meses_global < 3:
+                st.warning(f"⚠️ **Tendencia preliminar** (n={n_meses_global}). Se requieren ≥3 meses para análisis de tendencia robusto. Las conclusiones deben interpretarse con cautela.")
+            
             col_chart1, col_chart2 = st.columns(2)
             
             with col_chart1:
@@ -494,7 +546,7 @@ if current_view == "global":
                 'SoV': '% Visibilidad',
                 'Tráfico': 'Tráfico Est.',
                 'Ahorro': 'Valor Media (€)'
-            }), use_container_width=True, hide_index=True)
+            }))
             
             # Export all history
             csv_history = h_df.to_csv(index=False).encode('utf-8')
@@ -517,7 +569,7 @@ if current_view == "global":
                         if cache_key in st.session_state:
                             del st.session_state[cache_key]
                         st.success("Análisis histórico borrado. Refresca la página para generar uno nuevo.")
-                        st.rerun()
+                        safe_rerun()
                 elif global_mngt_pwd:
                     st.error("❌ Contraseña incorrecta.")
                 else:
@@ -537,14 +589,15 @@ elif current_view == "monthly" and current_import_id:
             conn.execute("DELETE FROM imports WHERE id = ?", (current_import_id,))
             conn.commit()
             conn.close()
-            st.rerun()
+            safe_rerun()
     else:
         # Filter for selected project domain
         selected_domain = main_domain
         
         # Metrics Calculation
         sov_df = etl.calculate_sov(df, domain_map, selected_domain)
-        main_sov = sov_df[sov_df['domain'] == selected_domain]['sov'].values[0] if not sov_df.empty else 0
+        sov_rows = sov_df[sov_df['domain'] == selected_domain]
+        main_sov = sov_rows['sov'].values[0] if not sov_rows.empty else 0
         opportunities = etl.get_striking_distance(df, domain_map, selected_domain)
         
         # --- PHASE 4: INTENT ENRICHMENT ---
@@ -583,15 +636,23 @@ elif current_view == "monthly" and current_import_id:
             opps_str = opportunities.head(10).to_string(index=False)
             report_display = get_ai_analysis(current_import_id, stats_str, opps_str, analysis_month)
 
-        # --- MoM TREND CALCULATION ---
+        # --- MoM TREND CALCULATION + P0.1/P0.4 ENHANCEMENTS ---
         prev_month_id = None
         imports_list = database.get_project_imports(project_id)
+        n_meses = len(imports_list)  # P0.4: Track historical depth
         current_idx = imports_list[imports_list['id'] == current_import_id].index[0]
         if current_idx + 1 < len(imports_list):
             prev_month_id = imports_list.iloc[current_idx + 1]['id']
         
         delta_sov = None
         delta_clics = None
+        delta_top3 = None
+        delta_top10 = None
+        risks_count = 0  # P0.1: Keywords with significant drops
+        
+        # Calculate current Top3 and Top10
+        top_3 = len(df[df[pos_col] <= 3]) if pos_col else 0
+        top_10 = len(df[df[pos_col] <= 10]) if pos_col else 0
         
         if prev_month_id:
             df_prev, domain_map_prev = database.load_import_data(prev_month_id)
@@ -604,12 +665,41 @@ elif current_view == "monthly" and current_import_id:
                 # Calculate previous Clics
                 prev_clics = df_prev[f'clics_{selected_domain}'].sum() if f'clics_{selected_domain}' in df_prev.columns else 0
                 delta_clics = total_clics - prev_clics
+                
+                # Calculate previous Top3/Top10
+                prev_pos_col = domain_map_prev.get(selected_domain, {}).get('position')
+                if prev_pos_col:
+                    prev_top3 = len(df_prev[df_prev[prev_pos_col] <= 3])
+                    prev_top10 = len(df_prev[df_prev[prev_pos_col] <= 10])
+                    delta_top3 = top_3 - prev_top3
+                    delta_top10 = top_10 - prev_top10
+                    
+                    # P0.1: Calculate Risks (keywords that dropped >=2 positions or left Top10)
+                    # Merge on keyword to compare positions
+                    merged = df.merge(
+                        df_prev[['keyword', prev_pos_col]].rename(columns={prev_pos_col: 'prev_pos'}),
+                        on='keyword',
+                        how='left'
+                    )
+                    # Risk: dropped >=2 positions OR was in Top10 and now isn't
+                    risks_mask = (
+                        ((merged[pos_col] - merged['prev_pos']) >= 2) |  # Dropped 2+ positions
+                        ((merged['prev_pos'] <= 10) & (merged[pos_col] > 10))  # Left Top10
+                    )
+                    risks_count = risks_mask.sum()
 
         st.title(f"Dashboard SEO: {selected_domain}")
-        st.caption(f"📅 Mes de Análisis Seleccionado: {analysis_month}")
         
-        # Panel de Calidad de Datos
-        render_data_quality_panel(df, domain_map)
+        # P0.4: Show historical depth in caption
+        last_month = imports_list.iloc[0]['month'] if not imports_list.empty else "N/A"
+        st.caption(f"📅 Mes de Análisis: **{analysis_month}** | 📊 Histórico: **{n_meses} meses** | Último cargado: {last_month}")
+        
+        # P0.4: Historical warning
+        if n_meses < 3:
+            st.warning(f"⚠️ **Tendencia preliminar** (n={n_meses}). Se requieren ≥3 meses para análisis de tendencia robusto.")
+        
+        # Panel de Calidad de Datos (now returns CPC coverage for gating)
+        cpc_coverage = render_data_quality_panel(df, domain_map)
         
         t1, t2, t3, t4, t5 = st.tabs(["📊 Resumen Ejecutivo", "⚔️ Competencia", "🚀 Oportunidades", "🧠 Inteligencia Avanzada", "🔎 Deep Dive"])
         
@@ -617,42 +707,80 @@ elif current_view == "monthly" and current_import_id:
             st.subheader("💡 Análisis Estratégico")
             st.info(report_display, icon="🤖")
             
-            st.markdown("### KPIs del Mes")
-            c1, c2, c3, c4 = st.columns(4)
+            # ==========================================
+            # P0.1: HOME "ESTADO DEL MES" (5 KPIs)
+            # ==========================================
+            st.markdown("### 📈 Estado del Mes")
+            c1, c2, c3, c4, c5 = st.columns(5)
+            
+            # Determine if deltas should be shown (n_meses >= 2)
+            show_deltas = n_meses >= 2
             
             # KPI 1: SoV
             c1.metric(
                 KPI_LABELS['sov'],
                 f"{main_sov:.1f}%",
-                delta=f"{delta_sov:+.1f}%" if delta_sov is not None else None,
+                delta=f"{delta_sov:+.1f} pp" if show_deltas and delta_sov is not None else None,
                 help=KPI_TOOLTIPS['sov']
             )
             
-            # KPI 2: Tráfico Estimado (con badge)
+            # KPI 2: Keywords Top3 / Top10
             with c2:
+                st.metric(
+                    "Top 3 / Top 10",
+                    f"{top_3} / {top_10}",
+                    delta=f"{delta_top3:+d} / {delta_top10:+d}" if show_deltas and delta_top3 is not None else None,
+                    help="Número de keywords en posiciones 1-3 y 1-10"
+                )
+            
+            # KPI 3: Tráfico Estimado (siempre marcado)
+            with c3:
                 st.metric(
                     KPI_LABELS['traffic'],
                     format_number(total_clics),
-                    delta=f"{delta_clics:+,.0f}".replace(',', '.') if delta_clics is not None else None,
+                    delta=f"{delta_clics:+,.0f}".replace(',', '.') if show_deltas and delta_clics is not None else None,
                     help=KPI_TOOLTIPS['traffic']
                 )
                 st.markdown('<span style="background:#FFA500;padding:2px 6px;border-radius:4px;font-size:10px;color:white;">ESTIMADO</span>', unsafe_allow_html=True)
             
-            # KPI 3: Valor Equivalente (con badge)
-            with c3:
-                st.metric(
-                    KPI_LABELS['value'],
-                    format_currency(total_media_value),
-                    help=KPI_TOOLTIPS['value']
-                )
-                st.markdown('<span style="background:#FFA500;padding:2px 6px;border-radius:4px;font-size:10px;color:white;">ESTIMADO</span>', unsafe_allow_html=True)
+            # KPI 4: Valor Equivalente (GATED by CPC coverage - P0.2)
+            with c4:
+                if cpc_coverage >= 40:  # Show if Yellow or Green
+                    st.metric(
+                        KPI_LABELS['value'],
+                        format_currency(total_media_value),
+                        help=KPI_TOOLTIPS['value']
+                    )
+                    if cpc_coverage >= 70:
+                        st.markdown('<span style="background:#2E7D32;padding:2px 6px;border-radius:4px;font-size:10px;color:white;">ESTIMADO</span>', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<span style="background:#FFA000;padding:2px 6px;border-radius:4px;font-size:10px;color:white;">CONFIANZA MEDIA</span>', unsafe_allow_html=True)
+                else:  # Red: Hide by default
+                    st.metric(
+                        KPI_LABELS['value'],
+                        "—",
+                        help="Oculto por CPC insuficiente (<40%)"
+                    )
+                    st.markdown('<span style="background:#C62828;padding:2px 6px;border-radius:4px;font-size:10px;color:white;">CPC INSUFICIENTE</span>', unsafe_allow_html=True)
             
-            # KPI 4: Oportunidades
-            c4.metric(
-                KPI_LABELS['opportunities'],
-                len(opportunities),
-                help=KPI_TOOLTIPS['opportunities']
-            )
+            # KPI 5: Riesgos (P0.1)
+            with c5:
+                if show_deltas:
+                    risk_color = "#C62828" if risks_count > 5 else ("#FFA000" if risks_count > 0 else "#2E7D32")
+                    st.metric(
+                        "⚠️ Riesgos",
+                        risks_count,
+                        help="Keywords con caída ≥2 posiciones o salida de Top10"
+                    )
+                    if risks_count > 0:
+                        st.markdown(f'<span style="background:{risk_color};padding:2px 6px;border-radius:4px;font-size:10px;color:white;">{risks_count} en riesgo</span>', unsafe_allow_html=True)
+                else:
+                    st.metric(
+                        "⚠️ Riesgos",
+                        "—",
+                        help="Requiere histórico previo para calcular"
+                    )
+                    st.caption("Histórico insuficiente")
             
             # Ranking Chart
             st.markdown("---")
@@ -699,7 +827,7 @@ elif current_view == "monthly" and current_import_id:
                     if col1.button("🔄 Regenerar Análisis IA", help="Borra el reporte actual y genera uno nuevo con la fecha corregida."):
                         database.update_report_text(current_import_id, None)
                         st.success("Reporte borrado con éxito. Al refrescar, la IA generará un nuevo análisis con la fecha del CSV.")
-                        st.rerun()
+                        safe_rerun()
                     
                     if col2.button("🗑️ Borrar este Mes", help="Elimina permanentemente los datos de este mes para que puedas volver a subirlos."):
                         conn = database.get_connection()
@@ -707,7 +835,7 @@ elif current_view == "monthly" and current_import_id:
                         conn.commit()
                         conn.close()
                         st.warning(f"Mes {analysis_month} eliminado del sistema.")
-                        st.rerun()
+                        safe_rerun()
                 elif mngt_pwd:
                     st.error("❌ Contraseña incorrecta.")
                 else:
@@ -783,7 +911,7 @@ elif current_view == "monthly" and current_import_id:
                 'visibility_score': 'Puntuación de Visibilidad',
                 'sov': 'Cuota de Mercado (%)'
             })
-            st.dataframe(sov_display, use_container_width=True, hide_index=True)
+            st.dataframe(sov_display)
             
             # Pie chart (collapsible)
             with st.expander("📊 Ver Gráfico Circular"):
@@ -799,43 +927,52 @@ elif current_view == "monthly" and current_import_id:
         with t3:
             st.subheader("🚀 Matriz de Oportunidades")
             
-            # Phase 6: Financial Metrics & Badges
+            # P0.3: Enhanced documentation with Motivo explanation
             st.markdown("""
-            > **Quick Wins**: Keywords en posiciones 4-10 (Striking Distance). 
-            > <span style="background:#FFA500;padding:2px 6px;border-radius:4px;font-size:10px;color:white;">EUR ESTIMADO</span> Las columnas de valor son proyecciones basadas en CPC.
+            > **Quick Wins**: Keywords en posiciones 4-10 (Striking Distance) con alto potencial de impacto.
+            > <span style="background:#FFA500;padding:2px 6px;border-radius:4px;font-size:10px;color:white;">ESTIMADO</span> Los valores son proyecciones basadas en CTR × CPC.
             """, unsafe_allow_html=True)
 
             if not opportunities.empty:
                 # Add financial columns if CPC exists
                 opp_display = opportunities.copy()
-                opp_display['CPC Est.'] = opp_display['cpc'].apply(lambda x: format_currency(x))
-                opp_display['Uplift Valor'] = opp_display.apply(
-                    lambda x: format_currency(x['uplift_value'] if pd.notnull(x.get('uplift_value')) else 0), axis=1
-                )
+                
+                # Format CPC
+                if 'cpc' in opp_display.columns:
+                    opp_display['CPC Est.'] = opp_display['cpc'].apply(lambda x: format_currency(x) if x > 0 else "—")
+                
+                # Format Uplift Value (P0.3: show "—" if null)
+                if 'uplift_value' in opp_display.columns:
+                    opp_display['Uplift Valor'] = opp_display['uplift_value'].apply(
+                        lambda x: format_currency(x) if pd.notnull(x) and x > 0 else "Sin estimación €"
+                    )
                 
                 # Intent badge formatting function
                 def format_intent(val):
-                    if "(V)" in str(val):
+                    if pd.isna(val):
+                        return "🤖 Mixta"
+                    if "(V)" in str(val) or val == "Validada":
                         return f"✅ {val}"
                     return f"🤖 {val}"
                 
-                opp_display['Intención'] = opp_display['intent'].apply(format_intent)
+                if 'intent' in opp_display.columns:
+                    opp_display['Intención'] = opp_display['intent'].apply(format_intent)
 
                 # Use the dynamic position column name for selection, then rename
-                cols_to_select = ['keyword', pos_col, 'volume', 'difficulty', 'Intención', 'CPC Est.', 'uplift_clicks', 'Uplift Valor', 'Score']
+                cols_to_select = ['keyword', pos_col, 'volume', 'difficulty', 'Intención', 'CPC Est.', 'uplift_clicks', 'Uplift Valor', 'motivo', 'opportunity_score']
                 # Filter strictly for existing columns to avoid KeyError
                 cols_to_select = [c for c in cols_to_select if c in opp_display.columns]
 
                 st.dataframe(
                     opp_display[cols_to_select].rename(columns={
                         'keyword': 'Palabra Clave',
-                        pos_col: 'Posición Actual',
+                        pos_col: 'Pos. Actual',
                         'volume': 'Búsquedas/mes',
                         'difficulty': 'Dificultad',
-                        'uplift_clicks': 'Uplift Tráfico'
-                    }),
-                    use_container_width=True,
-                    hide_index=True
+                        'uplift_clicks': 'Uplift Tráfico',
+                        'motivo': '📊 Motivo',
+                        'opportunity_score': 'Score'
+                    })
                 )
                 
                 # Export Button
@@ -874,36 +1011,49 @@ elif current_view == "monthly" and current_import_id:
             with col_a:
                 st.markdown("#### 💰 Keywords con mayor Ahorro Estimado")
                 st.caption("Palabras que te están ahorrando dinero en publicidad (Google Ads).")
-                mv_df = df.sort_values(f'media_value_{selected_domain}', ascending=False).head(15).copy()
-                mv_display = mv_df.rename(columns={
-                    'keyword': 'Palabra Clave',
-                    'volume': 'Búsquedas',
-                    'cpc': 'Coste Clic (Ads)',
-                    f'media_value_{selected_domain}': 'Ahorro Estimado'
-                })
-                st.dataframe(mv_display[['Palabra Clave', 'Búsquedas', 'Coste Clic (Ads)', 'Ahorro Estimado']], use_container_width=True)
+                
+                media_col = f'media_value_{selected_domain}'
+                if media_col in df.columns:
+                    mv_df = df.sort_values(media_col, ascending=False).head(15).copy()
+                    mv_display = mv_df.rename(columns={
+                        'keyword': 'Palabra Clave',
+                        'volume': 'Búsquedas',
+                        'cpc': 'Coste Clic (Ads)',
+                        media_col: 'Ahorro Estimado'
+                    })
+                    st.dataframe(mv_display[['Palabra Clave', 'Búsquedas', 'Coste Clic (Ads)', 'Ahorro Estimado']])
+                else:
+                    st.warning("No se encontraron datos de valor económico (media value) para este dominio.")
             
             with col_b:
                 st.markdown("#### 🏷️ Tráfico: Marca vs. Genérico")
                 st.caption("Diferencia entre personas que ya te conocen (Marca) vs. nuevos clientes (Genérico).")
                 
-                brand_stats = df.groupby('is_branded').agg({f'clics_{selected_domain}': 'sum', 'keyword': 'count'}).reset_index()
-                brand_stats['is_branded'] = brand_stats['is_branded'].map({True: 'Búsquedas de Marca', False: 'Búsquedas Genéricas'})
-                
-                fig_brand = px.bar(
-                    brand_stats, 
-                    x='is_branded', 
-                    y=f'clics_{selected_domain}', 
-                    title="Distribución de Tráfico Mensual",
-                    labels={'is_branded': 'Tipo de Palabra Clave', f'clics_{selected_domain}': 'Clics Estimados'},
-                    color='is_branded',
-                    color_discrete_sequence=['#1E88E5', '#D81B60']
-                )
-                st.plotly_chart(fig_brand, use_container_width=True)
+                clicks_col = f'clics_{selected_domain}'
+                if clicks_col in df.columns and 'is_branded' in df.columns:
+                    brand_stats = df.groupby('is_branded').agg({clicks_col: 'sum', 'keyword': 'count'}).reset_index()
+                    brand_stats['is_branded'] = brand_stats['is_branded'].map({True: 'Búsquedas de Marca', False: 'Búsquedas Genéricas'})
+                    
+                    fig_brand = px.bar(
+                        brand_stats, 
+                        x='is_branded', 
+                        y=clicks_col, 
+                        title="Distribución de Tráfico Mensual",
+                        labels={'is_branded': 'Tipo de Palabra Clave', clicks_col: 'Clics Estimados'},
+                        color='is_branded',
+                        color_discrete_sequence=['#1E88E5', '#D81B60']
+                    )
+                    st.plotly_chart(fig_brand, use_container_width=True)
+                else:
+                    st.info("Desglose Marca/Genérico no disponible (faltan datos).")
 
         with t5:
             st.subheader("🔎 Keyword Deep Dive (Evolución por Palabra)")
             st.markdown("Analiza la historia de una keyword específica a través de todos los meses cargados.")
+            
+            # P0.4: Historical warning in deep dive
+            if n_meses < 3:
+                st.info(f"📊 Histórico limitado ({n_meses} meses). Para análisis de tendencia robusto, se recomiendan ≥3 meses.")
             
             all_keywords = sorted(df['keyword'].unique())
             selected_kw_dive = st.selectbox("Selecciona una palabra clave:", all_keywords)
@@ -911,6 +1061,25 @@ elif current_view == "monthly" and current_import_id:
             if selected_kw_dive:
                 import json
                 kw_history_df = database.get_keyword_history(project_id, selected_kw_dive)
+                
+                # Get current keyword data for context messages (P0.5)
+                kw_current_row = df[df['keyword'] == selected_kw_dive]
+                current_pos = kw_current_row[pos_col].values[0] if pos_col and not kw_current_row.empty else None
+                current_traffic = kw_current_row[f'clics_{selected_domain}'].values[0] if f'clics_{selected_domain}' in kw_current_row.columns and not kw_current_row.empty else 0
+                current_value = kw_current_row[f'media_value_{selected_domain}'].values[0] if f'media_value_{selected_domain}' in kw_current_row.columns and not kw_current_row.empty else 0
+                
+                # P0.5: Context message for 0€/0 traffic or zero value
+                if current_traffic == 0 or current_value == 0:
+                    st.warning(
+                        "💡 **Potencial latente**. Esta keyword aún está fuera del rango de captación significativa. "
+                        "Prioriza subir 1–2 posiciones para comenzar a captar tráfico."
+                    )
+                
+                # P0.5: Striking distance badge
+                if current_pos and 4 <= current_pos <= 10:
+                    st.success(f"🎯 **Striking Distance** (Posición {current_pos:.0f}): Esta keyword está en zona de ataque. Un pequeño impulso puede generar gran impacto.")
+                elif current_pos and current_pos <= 3:
+                    st.info(f"🏆 **Top 3** (Posición {current_pos:.0f}): Esta keyword ya está capturando tráfico significativo.")
                 
                 if not kw_history_df.empty:
                     # Parse domain data json
@@ -941,13 +1110,21 @@ elif current_view == "monthly" and current_import_id:
                         k1.metric("Posición Actual", f"{last['Posición']:.0f}", delta=f"{pos_delta:.0f}", delta_color="inverse")
                         k2.metric("Tráfico Est.", f"{last['Tráfico Est.']:.0f}", delta=f"{last['Tráfico Est.'] - prev['Tráfico Est.']:.0f}")
                         k3.metric("Valor (€)", f"{last['Valor (€)']:.2f}€", delta=f"{last['Valor (€)'] - prev['Valor (€)']:.2f}€")
+                    else:
+                        # Only 1 month of data
+                        last = hp_df.iloc[-1]
+                        k1, k2, k3 = st.columns(3)
+                        k1.metric("Posición Actual", f"{last['Posición']:.0f}")
+                        k2.metric("Tráfico Est.", f"{last['Tráfico Est.']:.0f}")
+                        k3.metric("Valor (€)", f"{last['Valor (€)']:.2f}€")
+                        st.caption("Sin comparativa disponible (solo 1 mes de datos).")
                     
                     # Chart
                     fig_kw = px.line(hp_df, x='Mes', y='Posición', markers=True, title=f"Evolución de Posición: {selected_kw_dive}")
                     fig_kw['layout']['yaxis']['autorange'] = "reversed" # 1 is top
                     st.plotly_chart(fig_kw, use_container_width=True)
                     
-                    st.dataframe(hp_df, use_container_width=True)
+                    st.dataframe(hp_df)
                 else:
                     st.warning("No hay histórico suficiente para esta keyword.")
 
