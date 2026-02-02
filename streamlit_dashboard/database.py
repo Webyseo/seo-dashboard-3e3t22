@@ -272,3 +272,35 @@ def get_keyword_history(project_id, keyword):
         return pd.DataFrame()
     finally:
         conn.close()
+
+def delete_project(project_id):
+    """
+    Deletes a project and all associated data (imports, metrics).
+    Transactions ensure atomicity.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # 1. Get all import IDs for this project
+        cursor.execute("SELECT id FROM imports WHERE project_id = ?", (project_id,))
+        import_ids = [row[0] for row in cursor.fetchall()]
+        
+        if import_ids:
+            # 2. Delete all metrics for these imports
+            placeholders = ','.join(['?'] * len(import_ids))
+            cursor.execute(f"DELETE FROM keyword_metrics WHERE import_id IN ({placeholders})", import_ids)
+            
+            # 3. Delete imports
+            cursor.execute("DELETE FROM imports WHERE project_id = ?", (project_id,))
+            
+        # 4. Delete the project
+        cursor.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error deleting project: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()

@@ -379,6 +379,17 @@ with st.sidebar:
         project_id = selected_p_row['id']
         main_domain = selected_p_row['main_domain']
         
+        # Danger Zone for Project Deletion
+        with st.expander("🚨 Zona de Peligro"):
+            st.warning(f"Aquí puedes borrar todo el proyecto '{selected_p_row['name']}' y sus datos.")
+            del_pwd = st.text_input("Contraseña para borrar", type="password", key="del_proj_pwd")
+            if del_pwd == "Webyseo@":
+                if st.button("🗑️ ELIMINAR PROYECTO COMPLETO"):
+                    database.delete_project(project_id)
+                    st.success(f"Proyecto {selected_p_row['name']} eliminado.")
+                    time.sleep(1)
+                    safe_rerun()
+        
         st.markdown("---")
         
         # Import Selection
