@@ -96,10 +96,11 @@ def save_import_data(project_id, month, filename, df, domain_map):
     Saves a monthly import and all its associated keyword metrics.
     df: The processed dataframe
     domain_map: The mapping of columns to domains
+    Returns: import_id if successful, otherwise None
     """
     if df.empty:
         print("No keywords to save. Skipping import.")
-        return False
+        return None
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -145,11 +146,11 @@ def save_import_data(project_id, month, filename, df, domain_map):
         """, metrics_list)
         
         conn.commit()
-        return True
+        return import_id
     except Exception as e:
         print(f"Error saving data: {e}")
         conn.rollback()
-        return False
+        return None
     finally:
         conn.close()
 

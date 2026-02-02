@@ -46,3 +46,4 @@ __pycache__/
 seo_dashboard.db
 *.csv
 
+*.db

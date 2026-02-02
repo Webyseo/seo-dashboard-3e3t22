@@ -228,6 +228,12 @@ if google_api_key:
 else:
     st.session_state["api_key_configured"] = False
 
+# Gate AI calls: only on new CSV upload or explicit manual request
+if "pending_ai_import_id" not in st.session_state:
+    st.session_state["pending_ai_import_id"] = None
+if "pending_ai_global_project_id" not in st.session_state:
+    st.session_state["pending_ai_global_project_id"] = None
+
 # Helper for AI Report
 def get_ai_analysis(import_id, summary_stats, opportunities_sample, analysis_month):
     """Generates or retrieves AI report from DB with Marketing-First focus"""
@@ -238,18 +244,6 @@ def get_ai_analysis(import_id, summary_stats, opportunities_sample, analysis_mon
         # Upgrade to Gemini 3 Flash (User Request)
         # We forcefully try gemini-3-flash-preview first
         selected_model = 'gemini-3-flash-preview'
-
-        try:
-            # We still list models just in case we need to fallback, but we default to 3-flash
-            available_models = [m.name for m in genai.list_models()]
-            available_names = [n.replace('models/', '') for n in available_models]
-            
-            # If 3-flash is not explicitly in list, we STILL try it (it might be preview-hidden)
-            # But if we want to be safe, we could check. 
-            # Per instruction: "Force utilize gemini-3-flash-preview"
-            pass 
-        except Exception as e:
-            print(f"Error listing models: {e}")
             
         model = genai.GenerativeModel(selected_model)
         
@@ -301,14 +295,14 @@ def get_ai_analysis(import_id, summary_stats, opportunities_sample, analysis_mon
     except Exception as e:
         return f"Error en IA: {str(e)}"
 
-def get_global_ai_analysis(project_id, history_stats_str):
+def get_global_ai_analysis(project_id, history_stats_str, force=False):
     """Genera un análisis histórico de tendencias usando Gemini Pro"""
     if not st.session_state.get("api_key_configured"):
         return "⚠️ Configura una API Key válida para habilitar el análisis global de IA."
     
     # Simple caching in session state by project
     cache_key = f"global_report_{project_id}"
-    if cache_key in st.session_state:
+    if not force and cache_key in st.session_state:
         return st.session_state[cache_key]
     
     try:
@@ -430,8 +424,12 @@ with st.sidebar:
                 else:
                     if not ret['domains']:
                         st.warning("⚠️ No se detectaron columnas de 'Visibilidad'. Las gráficas de cuota de mercado (SoV) estarán vacías. Verifica el formato del CSV.")
-                    success = database.save_import_data(project_id, new_month, uploaded_file.name, ret['df'], ret['domains'])
-                    if success:
+                    import_id = database.save_import_data(project_id, new_month, uploaded_file.name, ret['df'], ret['domains'])
+                    if import_id:
+                        # Trigger AI only on new CSV upload
+                        st.session_state["pending_ai_import_id"] = import_id
+                        st.session_state["pending_ai_global_project_id"] = project_id
+                        st.session_state.pop(f"global_report_{project_id}", None)
                         st.success("¡Datos guardados!")
                         safe_rerun()
                     else:
@@ -485,9 +483,26 @@ if current_view == "global":
             
             # --- AI GLOBAL INSIGHTS ---
             stats_summary = h_df.to_string(index=False)
-            global_insights = get_global_ai_analysis(project_id, stats_summary)
+            cache_key = f"global_report_{project_id}"
+            global_insights = st.session_state.get(cache_key)
+            auto_generate_global = st.session_state.get("pending_ai_global_project_id") == project_id
+            button_label = "🔄 Regenerar análisis global" if global_insights else "🧠 Generar análisis global"
+            manual_generate_global = st.button(
+                button_label,
+                key="generate_global_ai",
+                help="Genera el análisis global con Gemini solo cuando lo solicites.",
+                disabled=not st.session_state.get("api_key_configured")
+            )
+
+            if manual_generate_global or auto_generate_global:
+                global_insights = get_global_ai_analysis(project_id, stats_summary, force=True)
+                if auto_generate_global:
+                    st.session_state["pending_ai_global_project_id"] = None
             
-            st.info(global_insights, icon="🤖")
+            if global_insights:
+                st.info(global_insights, icon="🤖")
+            else:
+                st.info("🤖 Análisis global no generado. Sube un CSV nuevo o pulsa \"Generar análisis global\".")
             st.markdown("---")
             
             # Overall Summary Cards (Aggregated)
@@ -581,16 +596,16 @@ if current_view == "global":
                 global_mngt_pwd = st.text_input("🔑 Contraseña de Gestión (Global)", type="password", key="global_pwd_input")
                 
                 if global_mngt_pwd == "Webyseo@":
-                    if st.button("🔄 Regenerar Análisis Global", help="Borra el análisis histórico actual y genera uno nuevo."):
+                    if st.button("🔄 Regenerar Análisis Global", key="regen_global_ai", help="Genera un nuevo análisis global bajo demanda."):
                         cache_key = f"global_report_{project_id}"
-                        if cache_key in st.session_state:
-                            del st.session_state[cache_key]
-                        st.success("Análisis histórico borrado. Refresca la página para generar uno nuevo.")
+                        st.session_state["pending_ai_global_project_id"] = project_id
+                        st.session_state.pop(cache_key, None)
+                        st.success("Solicitud enviada. El análisis global se generará ahora.")
                         safe_rerun()
                 elif global_mngt_pwd:
                     st.error("❌ Contraseña incorrecta.")
                 else:
-                    st.info("💡 Introduce la contraseña para habilitar la regeneración del análisis global.")
+                    st.info("💡 Introduce la contraseña para habilitar la regeneración manual del análisis global.")
         else:
             st.info("Sube datos para ver el reporte global.")
 
@@ -645,13 +660,6 @@ elif current_view == "monthly" and current_import_id:
         # Advanced Metrics Totals
         total_clics = df[f'clics_{selected_domain}'].sum() if f'clics_{selected_domain}' in df.columns else 0
         total_media_value = df[f'media_value_{selected_domain}'].sum() if f'media_value_{selected_domain}' in df.columns else 0
-
-        # AI Report Logic
-        report_display = stored_report
-        if not report_display:
-            stats_str = f"Dom: {selected_domain}, SoV: {main_sov:.2f}%, Top 10: {top_10}, Clics Est: {total_clics:.0f}, Media Value: {total_media_value:.0f}€"
-            opps_str = opportunities.head(10).to_string(index=False)
-            report_display = get_ai_analysis(current_import_id, stats_str, opps_str, analysis_month)
 
         # --- MoM TREND CALCULATION + P0.1/P0.4 ENHANCEMENTS ---
         prev_month_id = None
@@ -722,6 +730,26 @@ elif current_view == "monthly" and current_import_id:
         
         with t1:
             st.subheader("💡 Análisis Estratégico")
+            
+            report_display = stored_report
+            auto_generate_ai = st.session_state.get("pending_ai_import_id") == current_import_id
+            button_label = "🔄 Regenerar análisis IA" if report_display else "🧠 Generar análisis IA"
+            manual_generate_ai = st.button(
+                button_label,
+                key=f"generate_ai_{current_import_id}",
+                help="Genera el análisis con Gemini solo cuando lo solicites.",
+                disabled=not st.session_state.get("api_key_configured")
+            )
+            if manual_generate_ai or auto_generate_ai:
+                stats_str = f"Dom: {selected_domain}, SoV: {main_sov:.2f}%, Top 10: {top_10}, Clics Est: {total_clics:.0f}, Media Value: {total_media_value:.0f}€"
+                opps_str = opportunities.head(10).to_string(index=False)
+                report_display = get_ai_analysis(current_import_id, stats_str, opps_str, analysis_month)
+                if auto_generate_ai:
+                    st.session_state["pending_ai_import_id"] = None
+
+            if not report_display:
+                report_display = "🤖 Análisis no generado. Sube un CSV nuevo o pulsa \"Generar análisis IA\"."
+
             st.info(report_display, icon="🤖")
             
             # ==========================================
@@ -841,9 +869,9 @@ elif current_view == "monthly" and current_import_id:
                 col1, col2 = st.columns(2)
                 
                 if mngt_pwd == "Webyseo@":
-                    if col1.button("🔄 Regenerar Análisis IA", help="Borra el reporte actual y genera uno nuevo con la fecha corregida."):
-                        database.update_report_text(current_import_id, None)
-                        st.success("Reporte borrado con éxito. Al refrescar, la IA generará un nuevo análisis con la fecha del CSV.")
+                    if col1.button("🔄 Regenerar Análisis IA", key=f"regen_ai_{current_import_id}", help="Genera un nuevo análisis bajo demanda."):
+                        st.session_state["pending_ai_import_id"] = current_import_id
+                        st.success("Solicitud enviada. El análisis IA se generará ahora.")
                         safe_rerun()
                     
                     if col2.button("🗑️ Borrar este Mes", help="Elimina permanentemente los datos de este mes para que puedas volver a subirlos."):
@@ -1151,4 +1179,3 @@ else:
         st.success("✅ IA Configurada y lista.")
     else:
         st.warning("⚠️ IA Deshabilitada (Falta API Key).")
-
