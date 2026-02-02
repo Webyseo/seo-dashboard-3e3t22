@@ -300,11 +300,6 @@ def get_global_ai_analysis(project_id, history_stats_str, force=False):
     if not st.session_state.get("api_key_configured"):
         return "⚠️ Configura una API Key válida para habilitar el análisis global de IA."
     
-    # Simple caching in session state by project
-    cache_key = f"global_report_{project_id}"
-    if not force and cache_key in st.session_state:
-        return st.session_state[cache_key]
-    
     try:
         selected_model = 'gemini-3-flash-preview'
         # We skip the list check to force the preview model
@@ -326,8 +321,6 @@ def get_global_ai_analysis(project_id, history_stats_str, force=False):
         
         response = model.generate_content(prompt)
         report_text = response.text
-        
-        st.session_state[cache_key] = report_text
         return report_text
     except Exception as e:
         return f"❌ Error en análisis global: {str(e)}"
@@ -429,7 +422,7 @@ with st.sidebar:
                         # Trigger AI only on new CSV upload
                         st.session_state["pending_ai_import_id"] = import_id
                         st.session_state["pending_ai_global_project_id"] = project_id
-                        st.session_state.pop(f"global_report_{project_id}", None)
+                        database.update_global_report(project_id, None)
                         st.success("¡Datos guardados!")
                         safe_rerun()
                     else:
@@ -483,15 +476,22 @@ if current_view == "global":
             
             # --- AI GLOBAL INSIGHTS ---
             stats_summary = h_df.to_string(index=False)
-            cache_key = f"global_report_{project_id}"
-            global_insights = st.session_state.get(cache_key)
+            global_insights = database.get_global_report(project_id)
             auto_generate_global = st.session_state.get("pending_ai_global_project_id") == project_id
+            generation_error = None
 
             if auto_generate_global:
-                global_insights = get_global_ai_analysis(project_id, stats_summary, force=True)
-                if auto_generate_global:
-                    st.session_state["pending_ai_global_project_id"] = None
+                generated = get_global_ai_analysis(project_id, stats_summary, force=True)
+                if generated and not (generated.startswith("⚠️") or generated.startswith("❌")):
+                    database.update_global_report(project_id, generated)
+                    global_insights = generated
+                else:
+                    generation_error = generated or "❌ Error en análisis global."
+                st.session_state["pending_ai_global_project_id"] = None
             
+            if generation_error:
+                st.warning(generation_error)
+
             if global_insights:
                 st.info(global_insights, icon="🤖")
             else:
@@ -590,9 +590,8 @@ if current_view == "global":
                 
                 if global_mngt_pwd == "Webyseo@":
                     if st.button("🔄 Regenerar Análisis Global", key="regen_global_ai", help="Genera un nuevo análisis global bajo demanda."):
-                        cache_key = f"global_report_{project_id}"
                         st.session_state["pending_ai_global_project_id"] = project_id
-                        st.session_state.pop(cache_key, None)
+                        database.update_global_report(project_id, None)
                         st.success("Solicitud enviada. El análisis global se generará ahora.")
                         safe_rerun()
                 elif global_mngt_pwd:

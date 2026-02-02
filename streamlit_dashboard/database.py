@@ -24,6 +24,12 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+
+    # Ensure global report column exists for persistence
+    cursor.execute("PRAGMA table_info(projects)")
+    project_cols = [row[1] for row in cursor.fetchall()]
+    if "global_report_text" not in project_cols:
+        cursor.execute("ALTER TABLE projects ADD COLUMN global_report_text TEXT")
     
     # Imports table
     cursor.execute("""
@@ -90,6 +96,21 @@ def get_projects():
     df = pd.read_sql_query("SELECT * FROM projects", conn)
     conn.close()
     return df
+
+def get_global_report(project_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT global_report_text FROM projects WHERE id = ?", (project_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def update_global_report(project_id, text):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE projects SET global_report_text = ? WHERE id = ?", (text, project_id))
+    conn.commit()
+    conn.close()
 
 def save_import_data(project_id, month, filename, df, domain_map):
     """
