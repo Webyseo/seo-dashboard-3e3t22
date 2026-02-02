@@ -486,15 +486,8 @@ if current_view == "global":
             cache_key = f"global_report_{project_id}"
             global_insights = st.session_state.get(cache_key)
             auto_generate_global = st.session_state.get("pending_ai_global_project_id") == project_id
-            button_label = "🔄 Regenerar análisis global" if global_insights else "🧠 Generar análisis global"
-            manual_generate_global = st.button(
-                button_label,
-                key="generate_global_ai",
-                help="Genera el análisis global con Gemini solo cuando lo solicites.",
-                disabled=not st.session_state.get("api_key_configured")
-            )
 
-            if manual_generate_global or auto_generate_global:
+            if auto_generate_global:
                 global_insights = get_global_ai_analysis(project_id, stats_summary, force=True)
                 if auto_generate_global:
                     st.session_state["pending_ai_global_project_id"] = None
@@ -502,7 +495,7 @@ if current_view == "global":
             if global_insights:
                 st.info(global_insights, icon="🤖")
             else:
-                st.info("🤖 Análisis global no generado. Sube un CSV nuevo o pulsa \"Generar análisis global\".")
+                st.info("🤖 Análisis global no generado. Sube un CSV nuevo o solicita la regeneración en la zona de gestión (requiere contraseña).")
             st.markdown("---")
             
             # Overall Summary Cards (Aggregated)
@@ -733,14 +726,7 @@ elif current_view == "monthly" and current_import_id:
             
             report_display = stored_report
             auto_generate_ai = st.session_state.get("pending_ai_import_id") == current_import_id
-            button_label = "🔄 Regenerar análisis IA" if report_display else "🧠 Generar análisis IA"
-            manual_generate_ai = st.button(
-                button_label,
-                key=f"generate_ai_{current_import_id}",
-                help="Genera el análisis con Gemini solo cuando lo solicites.",
-                disabled=not st.session_state.get("api_key_configured")
-            )
-            if manual_generate_ai or auto_generate_ai:
+            if auto_generate_ai:
                 stats_str = f"Dom: {selected_domain}, SoV: {main_sov:.2f}%, Top 10: {top_10}, Clics Est: {total_clics:.0f}, Media Value: {total_media_value:.0f}€"
                 opps_str = opportunities.head(10).to_string(index=False)
                 report_display = get_ai_analysis(current_import_id, stats_str, opps_str, analysis_month)
@@ -748,7 +734,7 @@ elif current_view == "monthly" and current_import_id:
                     st.session_state["pending_ai_import_id"] = None
 
             if not report_display:
-                report_display = "🤖 Análisis no generado. Sube un CSV nuevo o pulsa \"Generar análisis IA\"."
+                report_display = "🤖 Análisis no generado. Sube un CSV nuevo o solicita la regeneración en la zona de gestión (requiere contraseña)."
 
             st.info(report_display, icon="🤖")
             
