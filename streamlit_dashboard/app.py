@@ -9,6 +9,7 @@ import plotly.express as px
 from datetime import datetime
 import os
 import time
+import json
 
 # Initialize Database
 database.init_db()
@@ -129,6 +130,105 @@ def render_data_quality_panel(df, domain_map):
         st.warning(warning_msg)
     
     return cpc_coverage  # Return for gating logic
+
+def build_top15_evolution(project_id, main_domain, imports_list):
+    """
+    Top 15 keywords por clics estimados del último mes.
+    Devuelve:
+      - summary_df: tabla rápida (último mes)
+      - evo_df: histórico long con columnas month, keyword, role, domain, position, clicks
+      - last_month: string YYYY-MM
+    """
+    if imports_list.empty:
+        return None, None, None
+
+    last_import_id = imports_list.iloc[0]['id']
+    last_month = imports_list.iloc[0]['month']
+
+    df_last, domain_map_last = database.load_import_data(last_import_id)
+    if df_last.empty:
+        return None, None, last_month
+
+    main_clicks_col = f'clics_{main_domain}'
+    if main_clicks_col not in df_last.columns:
+        return None, None, last_month
+
+    top15_df = df_last.sort_values(main_clicks_col, ascending=False).head(15).copy()
+    if top15_df.empty:
+        return None, None, last_month
+
+    domains = list(domain_map_last.keys())
+    summary_rows = []
+    competitor_by_kw = {}
+
+    for _, row in top15_df.iterrows():
+        keyword = row['keyword']
+        best_domain = None
+        best_clicks = -1
+
+        for domain in domains:
+            if domain == main_domain:
+                continue
+            col = f'clics_{domain}'
+            val = row[col] if col in row and pd.notnull(row[col]) else 0
+            if val > best_clicks:
+                best_clicks = val
+                best_domain = domain
+
+        if best_clicks <= 0:
+            best_domain = None
+
+        competitor_by_kw[keyword] = best_domain
+
+        main_pos_col = domain_map_last.get(main_domain, {}).get('position')
+        comp_pos_col = domain_map_last.get(best_domain, {}).get('position') if best_domain else None
+
+        summary_rows.append({
+            'Keyword': keyword,
+            'Clics (tu dominio)': row.get(main_clicks_col, 0),
+            'Posición (tu dominio)': row.get(main_pos_col) if main_pos_col else None,
+            'Competidor referencia': best_domain or "—",
+            'Clics (competidor)': row.get(f'clics_{best_domain}', 0) if best_domain else None,
+            'Posición (competidor)': row.get(comp_pos_col) if comp_pos_col else None
+        })
+
+    summary_df = pd.DataFrame(summary_rows)
+
+    evo_rows = []
+    for keyword, comp_domain in competitor_by_kw.items():
+        hist = database.get_keyword_history(project_id, keyword)
+        if hist.empty:
+            continue
+
+        for _, hrow in hist.iterrows():
+            try:
+                domain_data = json.loads(hrow['data_json']) if hrow.get('data_json') else {}
+            except Exception:
+                domain_data = {}
+
+            main_data = domain_data.get(main_domain, {})
+            evo_rows.append({
+                'month': hrow['month'],
+                'keyword': keyword,
+                'role': 'Tu dominio',
+                'domain': main_domain,
+                'position': main_data.get('pos'),
+                'clicks': main_data.get('clics', 0)
+            })
+
+            if comp_domain:
+                comp_data = domain_data.get(comp_domain, {})
+                evo_rows.append({
+                    'month': hrow['month'],
+                    'keyword': keyword,
+                    'role': 'Competencia',
+                    'domain': comp_domain,
+                    'position': comp_data.get('pos'),
+                    'clicks': comp_data.get('clics', 0)
+                })
+
+    evo_df = pd.DataFrame(evo_rows) if evo_rows else None
+    return summary_df, evo_df, last_month
 
 def render_intent_validation_module(df):
     """Módulo para validar manualmente la intención de búsqueda"""
@@ -843,6 +943,97 @@ elif current_view == "monthly" and current_import_id:
                     }
                 )
                 st.plotly_chart(fig, use_container_width=True)
+
+            # ==========================================
+            # TOP 15 KEYWORDS - EVOLUCIÓN VS COMPETENCIA
+            # ==========================================
+            st.markdown("---")
+            st.markdown("### 🔝 Top 15 Keywords — Evolución vs Competencia")
+            summary_df, evo_df, last_month_top15 = build_top15_evolution(
+                project_id,
+                selected_domain,
+                imports_list
+            )
+
+            if summary_df is None or summary_df.empty:
+                st.info("No hay datos suficientes para calcular el Top 15 por clics estimados.")
+            else:
+                st.caption(f"Top 15 por clics estimados del último mes cargado ({last_month_top15}).")
+                st.caption("Competidor referencia: dominio con más clics por keyword en ese mes.")
+
+                summary_display = summary_df.copy()
+                if 'Clics (tu dominio)' in summary_display.columns:
+                    summary_display['Clics (tu dominio)'] = (
+                        pd.to_numeric(summary_display['Clics (tu dominio)'], errors='coerce')
+                        .fillna(0).round(0).astype(int)
+                    )
+                if 'Clics (competidor)' in summary_display.columns:
+                    summary_display['Clics (competidor)'] = (
+                        pd.to_numeric(summary_display['Clics (competidor)'], errors='coerce')
+                        .round(0)
+                    )
+                if 'Posición (tu dominio)' in summary_display.columns:
+                    summary_display['Posición (tu dominio)'] = (
+                        pd.to_numeric(summary_display['Posición (tu dominio)'], errors='coerce')
+                        .round(1)
+                    )
+                if 'Posición (competidor)' in summary_display.columns:
+                    summary_display['Posición (competidor)'] = (
+                        pd.to_numeric(summary_display['Posición (competidor)'], errors='coerce')
+                        .round(1)
+                    )
+
+                if 'Competidor referencia' in summary_display.columns:
+                    no_comp_mask = summary_display['Competidor referencia'] == "—"
+                    if no_comp_mask.any():
+                        summary_display.loc[no_comp_mask, ['Clics (competidor)', 'Posición (competidor)']] = None
+
+                st.dataframe(summary_display, use_container_width=True)
+
+                if evo_df is not None and not evo_df.empty and n_meses >= 2:
+                    # Ensure chronological month order
+                    evo_df['month_dt'] = pd.to_datetime(evo_df['month'] + "-01", errors='coerce')
+                    month_order = (
+                        evo_df.dropna(subset=['month_dt'])
+                        .sort_values('month_dt')['month']
+                        .unique()
+                        .tolist()
+                    )
+
+                    if evo_df['role'].nunique() == 1:
+                        st.caption("No se detectaron competidores con datos suficientes; se muestra solo tu dominio.")
+
+                    pos_df = evo_df.dropna(subset=['position']).groupby(
+                        ['month', 'role'], as_index=False
+                    )['position'].mean()
+                    clicks_df = evo_df.groupby(['month', 'role'], as_index=False)['clicks'].sum()
+
+                    fig_pos = px.line(
+                        pos_df,
+                        x='month',
+                        y='position',
+                        color='role',
+                        markers=True,
+                        category_orders={'month': month_order},
+                        labels={'month': 'Mes', 'position': 'Posición promedio'},
+                        title="Posición promedio Top 15 (menor es mejor)"
+                    )
+                    fig_pos.update_yaxes(autorange='reversed')
+                    st.plotly_chart(fig_pos, use_container_width=True)
+
+                    fig_clicks = px.line(
+                        clicks_df,
+                        x='month',
+                        y='clicks',
+                        color='role',
+                        markers=True,
+                        category_orders={'month': month_order},
+                        labels={'month': 'Mes', 'clicks': 'Clics estimados'},
+                        title="Clics estimados Top 15"
+                    )
+                    st.plotly_chart(fig_clicks, use_container_width=True)
+                else:
+                    st.caption("Histórico insuficiente para mostrar evolución (se requiere ≥2 meses).")
 
             # --- ZONA DE GESTIÓN ---
             st.markdown("---")
