@@ -174,9 +174,11 @@ def build_top15_evolution(project_id, selected_domain, imports_list):
       - evo_df: histórico long con columnas month, keyword, role, domain, position, clicks
       - last_month: string YYYY-MM
       - reason: motivo si no hay datos suficientes
+      - metric_label: métrica utilizada para el Top 15
+      - metric_type: clicks | visibility | position
     """
     if imports_list.empty:
-        return None, None, None, "No hay meses cargados"
+        return None, None, None, "No hay meses cargados", None, None
 
     df_last = None
     domain_map_last = None
@@ -188,18 +190,39 @@ def build_top15_evolution(project_id, selected_domain, imports_list):
         df_candidate, dmap_candidate = database.load_import_data(imp['id'])
         if df_candidate.empty:
             continue
-        if main_clicks_col not in df_candidate.columns:
-            continue
         df_last = df_candidate
         domain_map_last = dmap_candidate
         break
 
     if df_last is None or domain_map_last is None:
-        return None, None, last_month, "No hay datos válidos con clics estimados para el dominio seleccionado"
+        return None, None, last_month, "No hay datos válidos en los meses cargados", None, None
 
-    top15_df = df_last.sort_values(main_clicks_col, ascending=False).head(15).copy()
+    # Determine best available metric for Top 15
+    metric_type = None
+    metric_label = None
+    metric_col_main = None
+
+    vis_col_main = domain_map_last.get(selected_domain, {}).get('visibility')
+    pos_col_main = domain_map_last.get(selected_domain, {}).get('position')
+
+    if main_clicks_col in df_last.columns and df_last[main_clicks_col].sum() > 0:
+        metric_type = "clicks"
+        metric_label = "Clics estimados"
+        metric_col_main = main_clicks_col
+    elif vis_col_main and vis_col_main in df_last.columns and df_last[vis_col_main].sum() > 0:
+        metric_type = "visibility"
+        metric_label = "Visibilidad"
+        metric_col_main = vis_col_main
+    elif pos_col_main and pos_col_main in df_last.columns and df_last[pos_col_main].notnull().any():
+        metric_type = "position"
+        metric_label = "Posición"
+        metric_col_main = pos_col_main
+    else:
+        return None, None, last_month, "No hay clics/visibilidad/posición disponibles para el dominio seleccionado", None, None
+
+    top15_df = df_last.sort_values(metric_col_main, ascending=(metric_type == "position")).head(15).copy()
     if top15_df.empty:
-        return None, None, last_month, "No hay suficientes keywords para el Top 15"
+        return None, None, last_month, "No hay suficientes keywords para el Top 15", None, None
 
     domains = list(domain_map_last.keys())
     summary_rows = []
@@ -208,18 +231,35 @@ def build_top15_evolution(project_id, selected_domain, imports_list):
     for _, row in top15_df.iterrows():
         keyword = row['keyword']
         best_domain = None
-        best_clicks = -1
+        best_value = None
 
         for domain in domains:
             if domain == selected_domain:
                 continue
-            col = f'clics_{domain}'
-            val = row[col] if col in row and pd.notnull(row[col]) else 0
-            if val > best_clicks:
-                best_clicks = val
-                best_domain = domain
+            if metric_type == "clicks":
+                col = f'clics_{domain}'
+                val = row[col] if col in row and pd.notnull(row[col]) else 0
+                if best_value is None or val > best_value:
+                    best_value = val
+                    best_domain = domain
+            elif metric_type == "visibility":
+                vcol = domain_map_last.get(domain, {}).get('visibility')
+                val = row[vcol] if vcol and vcol in row and pd.notnull(row[vcol]) else 0
+                if best_value is None or val > best_value:
+                    best_value = val
+                    best_domain = domain
+            elif metric_type == "position":
+                pcol = domain_map_last.get(domain, {}).get('position')
+                val = row[pcol] if pcol and pcol in row and pd.notnull(row[pcol]) else None
+                if val is None:
+                    continue
+                if best_value is None or val < best_value:
+                    best_value = val
+                    best_domain = domain
 
-        if best_clicks <= 0:
+        if metric_type in ("clicks", "visibility") and (best_value is None or best_value <= 0):
+            best_domain = None
+        if metric_type == "position" and best_value is None:
             best_domain = None
 
         competitor_by_kw[keyword] = best_domain
@@ -227,14 +267,29 @@ def build_top15_evolution(project_id, selected_domain, imports_list):
         main_pos_col = domain_map_last.get(selected_domain, {}).get('position')
         comp_pos_col = domain_map_last.get(best_domain, {}).get('position') if best_domain else None
 
+        # Metric values for summary
+        if metric_type == "clicks":
+            main_metric_val = row.get(main_clicks_col, 0)
+            comp_metric_val = row.get(f'clics_{best_domain}', 0) if best_domain else None
+        elif metric_type == "visibility":
+            main_metric_val = row.get(vis_col_main, 0) if vis_col_main else None
+            comp_vis_col = domain_map_last.get(best_domain, {}).get('visibility') if best_domain else None
+            comp_metric_val = row.get(comp_vis_col, 0) if comp_vis_col else None
+        else:  # position
+            main_metric_val = row.get(pos_col_main) if pos_col_main else None
+            comp_metric_val = row.get(comp_pos_col) if comp_pos_col else None
+
         summary_rows.append({
             'Keyword': keyword,
-            'Clics (tu dominio)': row.get(main_clicks_col, 0),
-            'Posición (tu dominio)': row.get(main_pos_col) if main_pos_col else None,
+            f'{metric_label} (tu dominio)': main_metric_val,
             'Competidor referencia': best_domain or "—",
-            'Clics (competidor)': row.get(f'clics_{best_domain}', 0) if best_domain else None,
-            'Posición (competidor)': row.get(comp_pos_col) if comp_pos_col else None
+            f'{metric_label} (competidor)': comp_metric_val
         })
+
+        # Append positions if metric is not position and columns exist
+        if metric_type != "position":
+            summary_rows[-1]['Posición (tu dominio)'] = row.get(main_pos_col) if main_pos_col else None
+            summary_rows[-1]['Posición (competidor)'] = row.get(comp_pos_col) if comp_pos_col else None
 
     summary_df = pd.DataFrame(summary_rows)
 
@@ -251,28 +306,40 @@ def build_top15_evolution(project_id, selected_domain, imports_list):
                 domain_data = {}
 
             main_data = domain_data.get(selected_domain, {})
+            if metric_type == "clicks":
+                main_metric = main_data.get('clics', 0)
+            elif metric_type == "visibility":
+                main_metric = main_data.get('vis', 0)
+            else:
+                main_metric = main_data.get('pos')
             evo_rows.append({
                 'month': hrow['month'],
                 'keyword': keyword,
                 'role': 'Tu dominio',
                 'domain': selected_domain,
                 'position': main_data.get('pos'),
-                'clicks': main_data.get('clics', 0)
+                'metric': main_metric
             })
 
             if comp_domain:
                 comp_data = domain_data.get(comp_domain, {})
+                if metric_type == "clicks":
+                    comp_metric = comp_data.get('clics', 0)
+                elif metric_type == "visibility":
+                    comp_metric = comp_data.get('vis', 0)
+                else:
+                    comp_metric = comp_data.get('pos')
                 evo_rows.append({
                     'month': hrow['month'],
                     'keyword': keyword,
                     'role': 'Competencia',
                     'domain': comp_domain,
                     'position': comp_data.get('pos'),
-                    'clicks': comp_data.get('clics', 0)
+                    'metric': comp_metric
                 })
 
     evo_df = pd.DataFrame(evo_rows) if evo_rows else None
-    return summary_df, evo_df, last_month, None
+    return summary_df, evo_df, last_month, None, metric_label, metric_type
 
 def render_intent_validation_module(df):
     """Módulo para validar manualmente la intención de búsqueda"""
@@ -1019,7 +1086,7 @@ elif current_view == "monthly" and current_import_id:
             # ==========================================
             st.markdown("---")
             st.markdown("### 🔝 Top 15 Keywords — Evolución vs Competencia")
-            summary_df, evo_df, last_month_top15, top15_reason = build_top15_evolution(
+            summary_df, evo_df, last_month_top15, top15_reason, metric_label, metric_type = build_top15_evolution(
                 project_id,
                 selected_domain,
                 imports_list
@@ -1027,22 +1094,40 @@ elif current_view == "monthly" and current_import_id:
 
             if summary_df is None or summary_df.empty:
                 reason_txt = f" ({top15_reason})" if top15_reason else ""
-                st.info(f"No hay datos suficientes para calcular el Top 15 por clics estimados.{reason_txt}")
+                st.info(f"No hay datos suficientes para calcular el Top 15.{reason_txt}")
             else:
-                st.caption(f"Top 15 por clics estimados del último mes cargado ({last_month_top15}).")
-                st.caption("Competidor referencia: dominio con más clics por keyword en ese mes.")
+                metric_label = metric_label or "Clics estimados"
+                if metric_type and metric_type != "clicks":
+                    st.caption(f"Clics estimados no disponibles; se usa {metric_label.lower()} como métrica.")
+                st.caption(f"Top 15 por {metric_label.lower()} del último mes cargado ({last_month_top15}).")
+                if metric_type == "clicks":
+                    st.caption("Competidor referencia: dominio con más clics por keyword en ese mes.")
+                elif metric_type == "visibility":
+                    st.caption("Competidor referencia: dominio con mayor visibilidad por keyword en ese mes.")
+                elif metric_type == "position":
+                    st.caption("Competidor referencia: dominio con mejor posición por keyword en ese mes.")
 
                 summary_display = summary_df.copy()
-                if 'Clics (tu dominio)' in summary_display.columns:
-                    summary_display['Clics (tu dominio)'] = (
-                        pd.to_numeric(summary_display['Clics (tu dominio)'], errors='coerce')
-                        .fillna(0).round(0).astype(int)
-                    )
-                if 'Clics (competidor)' in summary_display.columns:
-                    summary_display['Clics (competidor)'] = (
-                        pd.to_numeric(summary_display['Clics (competidor)'], errors='coerce')
-                        .round(0)
-                    )
+                # Format dynamic metric columns
+                metric_col_tu = f"{metric_label} (tu dominio)" if metric_label else None
+                metric_col_comp = f"{metric_label} (competidor)" if metric_label else None
+
+                if metric_col_tu and metric_col_tu in summary_display.columns:
+                    series = pd.to_numeric(summary_display[metric_col_tu], errors='coerce')
+                    if metric_type == "visibility":
+                        summary_display[metric_col_tu] = series.round(2)
+                    elif metric_type == "position":
+                        summary_display[metric_col_tu] = series.round(1)
+                    else:
+                        summary_display[metric_col_tu] = series.fillna(0).round(0).astype(int)
+                if metric_col_comp and metric_col_comp in summary_display.columns:
+                    series = pd.to_numeric(summary_display[metric_col_comp], errors='coerce')
+                    if metric_type == "visibility":
+                        summary_display[metric_col_comp] = series.round(2)
+                    elif metric_type == "position":
+                        summary_display[metric_col_comp] = series.round(1)
+                    else:
+                        summary_display[metric_col_comp] = series.round(0)
                 if 'Posición (tu dominio)' in summary_display.columns:
                     summary_display['Posición (tu dominio)'] = (
                         pd.to_numeric(summary_display['Posición (tu dominio)'], errors='coerce')
@@ -1057,7 +1142,13 @@ elif current_view == "monthly" and current_import_id:
                 if 'Competidor referencia' in summary_display.columns:
                     no_comp_mask = summary_display['Competidor referencia'] == "—"
                     if no_comp_mask.any():
-                        summary_display.loc[no_comp_mask, ['Clics (competidor)', 'Posición (competidor)']] = None
+                        cols_to_clear = []
+                        if metric_col_comp in summary_display.columns:
+                            cols_to_clear.append(metric_col_comp)
+                        if 'Posición (competidor)' in summary_display.columns:
+                            cols_to_clear.append('Posición (competidor)')
+                        if cols_to_clear:
+                            summary_display.loc[no_comp_mask, cols_to_clear] = None
 
                 st.dataframe(summary_display, use_container_width=True)
 
@@ -1077,32 +1168,41 @@ elif current_view == "monthly" and current_import_id:
                     pos_df = evo_df.dropna(subset=['position']).groupby(
                         ['month', 'role'], as_index=False
                     )['position'].mean()
-                    clicks_df = evo_df.groupby(['month', 'role'], as_index=False)['clicks'].sum()
+                    metric_df = evo_df.dropna(subset=['metric']).groupby(
+                        ['month', 'role'], as_index=False
+                    )['metric'].sum()
 
-                    fig_pos = px.line(
-                        pos_df,
-                        x='month',
-                        y='position',
-                        color='role',
-                        markers=True,
-                        category_orders={'month': month_order},
-                        labels={'month': 'Mes', 'position': 'Posición promedio'},
-                        title="Posición promedio Top 15 (menor es mejor)"
-                    )
-                    fig_pos.update_yaxes(autorange='reversed')
-                    st.plotly_chart(fig_pos, use_container_width=True)
+                    if not pos_df.empty:
+                        fig_pos = px.line(
+                            pos_df,
+                            x='month',
+                            y='position',
+                            color='role',
+                            markers=True,
+                            category_orders={'month': month_order},
+                            labels={'month': 'Mes', 'position': 'Posición promedio'},
+                            title="Posición promedio Top 15 (menor es mejor)"
+                        )
+                        fig_pos.update_yaxes(autorange='reversed')
+                        st.plotly_chart(fig_pos, use_container_width=True)
+                    else:
+                        st.caption("No hay posiciones suficientes para mostrar evolución.")
 
-                    fig_clicks = px.line(
-                        clicks_df,
-                        x='month',
-                        y='clicks',
-                        color='role',
-                        markers=True,
-                        category_orders={'month': month_order},
-                        labels={'month': 'Mes', 'clicks': 'Clics estimados'},
-                        title="Clics estimados Top 15"
-                    )
-                    st.plotly_chart(fig_clicks, use_container_width=True)
+                    if metric_type != "position" and not metric_df.empty:
+                        fig_metric = px.line(
+                            metric_df,
+                            x='month',
+                            y='metric',
+                            color='role',
+                            markers=True,
+                            category_orders={'month': month_order},
+                            labels={'month': 'Mes', 'metric': metric_label or 'Métrica'},
+                            title=f"{metric_label or 'Métrica'} Top 15"
+                        )
+                        st.plotly_chart(fig_metric, use_container_width=True)
+                    else:
+                        if metric_type != "position":
+                            st.caption("No hay métrica suficiente para mostrar evolución.")
                 else:
                     st.caption("Histórico insuficiente para mostrar evolución (se requiere ≥2 meses).")
 
