@@ -178,16 +178,24 @@ def build_top15_evolution(project_id, selected_domain, imports_list):
     if imports_list.empty:
         return None, None, None, "No hay meses cargados"
 
-    last_import_id = imports_list.iloc[0]['id']
-    last_month = imports_list.iloc[0]['month']
-
-    df_last, domain_map_last = database.load_import_data(last_import_id)
-    if df_last.empty:
-        return None, None, last_month, "No hay datos para el último mes"
-
+    df_last = None
+    domain_map_last = None
+    last_month = None
     main_clicks_col = f'clics_{selected_domain}'
-    if main_clicks_col not in df_last.columns:
-        return None, None, last_month, "No hay clics estimados para el dominio seleccionado"
+
+    for _, imp in imports_list.iterrows():
+        last_month = imp['month']
+        df_candidate, dmap_candidate = database.load_import_data(imp['id'])
+        if df_candidate.empty:
+            continue
+        if main_clicks_col not in df_candidate.columns:
+            continue
+        df_last = df_candidate
+        domain_map_last = dmap_candidate
+        break
+
+    if df_last is None or domain_map_last is None:
+        return None, None, last_month, "No hay datos válidos con clics estimados para el dominio seleccionado"
 
     top15_df = df_last.sort_values(main_clicks_col, ascending=False).head(15).copy()
     if top15_df.empty:
