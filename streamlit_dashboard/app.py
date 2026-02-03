@@ -88,6 +88,41 @@ def format_number(value):
     """Formatea números grandes con separadores europeos"""
     return f"{value:,.0f}".replace(',', '.')
 
+def normalize_domain(domain):
+    if not domain:
+        return ""
+    d = str(domain).strip().lower()
+    d = d.replace("https://", "").replace("http://", "")
+    if d.startswith("www."):
+        d = d[4:]
+    return d
+
+def resolve_main_domain(main_domain, domain_map):
+    """
+    Intenta resolver el dominio principal contra los dominios detectados en el CSV.
+    Devuelve (resolved_domain, note) donde note es un mensaje si hubo ajuste.
+    """
+    if not domain_map:
+        return main_domain, None
+
+    if main_domain in domain_map:
+        return main_domain, None
+
+    norm_main = normalize_domain(main_domain)
+    for d in domain_map.keys():
+        if normalize_domain(d) == norm_main:
+            return d, f"Dominio principal normalizado a '{d}'"
+
+    base = norm_main.split('.')[0] if norm_main else ""
+    if base:
+        candidates = [d for d in domain_map.keys() if normalize_domain(d).split('.')[0] == base]
+        if len(candidates) == 1:
+            return candidates[0], f"Dominio principal ajustado a '{candidates[0]}' por coincidencia de marca"
+
+    # Fallback conservador: usar primer dominio detectado
+    first_domain = list(domain_map.keys())[0]
+    return first_domain, f"Dominio principal ajustado a '{first_domain}' (no se encontró coincidencia exacta)"
+
 def render_data_quality_panel(df, domain_map):
     """
     Muestra panel de calidad de datos como SEMÁFORO operativo (P0.2).
@@ -131,31 +166,32 @@ def render_data_quality_panel(df, domain_map):
     
     return cpc_coverage  # Return for gating logic
 
-def build_top15_evolution(project_id, main_domain, imports_list):
+def build_top15_evolution(project_id, selected_domain, imports_list):
     """
     Top 15 keywords por clics estimados del último mes.
     Devuelve:
       - summary_df: tabla rápida (último mes)
       - evo_df: histórico long con columnas month, keyword, role, domain, position, clicks
       - last_month: string YYYY-MM
+      - reason: motivo si no hay datos suficientes
     """
     if imports_list.empty:
-        return None, None, None
+        return None, None, None, "No hay meses cargados"
 
     last_import_id = imports_list.iloc[0]['id']
     last_month = imports_list.iloc[0]['month']
 
     df_last, domain_map_last = database.load_import_data(last_import_id)
     if df_last.empty:
-        return None, None, last_month
+        return None, None, last_month, "No hay datos para el último mes"
 
-    main_clicks_col = f'clics_{main_domain}'
+    main_clicks_col = f'clics_{selected_domain}'
     if main_clicks_col not in df_last.columns:
-        return None, None, last_month
+        return None, None, last_month, "No hay clics estimados para el dominio seleccionado"
 
     top15_df = df_last.sort_values(main_clicks_col, ascending=False).head(15).copy()
     if top15_df.empty:
-        return None, None, last_month
+        return None, None, last_month, "No hay suficientes keywords para el Top 15"
 
     domains = list(domain_map_last.keys())
     summary_rows = []
@@ -167,7 +203,7 @@ def build_top15_evolution(project_id, main_domain, imports_list):
         best_clicks = -1
 
         for domain in domains:
-            if domain == main_domain:
+            if domain == selected_domain:
                 continue
             col = f'clics_{domain}'
             val = row[col] if col in row and pd.notnull(row[col]) else 0
@@ -180,7 +216,7 @@ def build_top15_evolution(project_id, main_domain, imports_list):
 
         competitor_by_kw[keyword] = best_domain
 
-        main_pos_col = domain_map_last.get(main_domain, {}).get('position')
+        main_pos_col = domain_map_last.get(selected_domain, {}).get('position')
         comp_pos_col = domain_map_last.get(best_domain, {}).get('position') if best_domain else None
 
         summary_rows.append({
@@ -206,12 +242,12 @@ def build_top15_evolution(project_id, main_domain, imports_list):
             except Exception:
                 domain_data = {}
 
-            main_data = domain_data.get(main_domain, {})
+            main_data = domain_data.get(selected_domain, {})
             evo_rows.append({
                 'month': hrow['month'],
                 'keyword': keyword,
                 'role': 'Tu dominio',
-                'domain': main_domain,
+                'domain': selected_domain,
                 'position': main_data.get('pos'),
                 'clicks': main_data.get('clics', 0)
             })
@@ -228,7 +264,7 @@ def build_top15_evolution(project_id, main_domain, imports_list):
                 })
 
     evo_df = pd.DataFrame(evo_rows) if evo_rows else None
-    return summary_df, evo_df, last_month
+    return summary_df, evo_df, last_month, None
 
 def render_intent_validation_module(df):
     """Módulo para validar manualmente la intención de búsqueda"""
@@ -540,10 +576,26 @@ with st.sidebar:
 
 # --- MAIN DASHBOARD ---
 if current_view == "global":
-    st.title(f"🌍 Reporte Global: {main_domain}")
+    all_imports = database.get_project_imports(project_id)
+    resolved_global_domain = main_domain
+    domain_note_global = None
+    if not all_imports.empty:
+        df_last_global, d_map_last = database.load_import_data(all_imports.iloc[0]['id'])
+        resolved_global_domain, domain_note_global = resolve_main_domain(main_domain, d_map_last)
+
+    st.title(f"🌍 Reporte Global: {resolved_global_domain}")
+    if resolved_global_domain != main_domain:
+        st.caption(f"Dominio configurado: {main_domain}")
+        if domain_note_global:
+            st.warning(f"Dominio principal configurado '{main_domain}' no aparece en el CSV. Se usará '{resolved_global_domain}' para los cálculos.")
+            if mode == "admin":
+                if st.button(f"Actualizar dominio principal a {resolved_global_domain}", key="update_domain_global"):
+                    database.update_project_domain(project_id, resolved_global_domain)
+                    st.success("Dominio principal actualizado.")
+                    time.sleep(1)
+                    safe_rerun()
     st.markdown("Comparativa histórica de todos los datos cargados para este proyecto.")
     
-    all_imports = database.get_project_imports(project_id)
     n_meses_global = len(all_imports)  # P0.4: Track historical depth
     
     # P0.4: Show historical depth in global view
@@ -559,14 +611,14 @@ if current_view == "global":
         for i, (_, imp) in enumerate(all_imports.iterrows()):
             df_month, d_map = database.load_import_data(imp['id'])
             if not df_month.empty:
-                sov_df = etl.calculate_sov(df_month, d_map, main_domain)
-                sov_rows = sov_df[sov_df['domain'] == main_domain]
+                sov_df = etl.calculate_sov(df_month, d_map, resolved_global_domain)
+                sov_rows = sov_df[sov_df['domain'] == resolved_global_domain]
                 sov = sov_rows['sov'].values[0] if not sov_rows.empty else 0
                 history_data.append({
                     'Mes': imp['month'],
                     'SoV': sov,
-                    'Tráfico': df_month[f'clics_{main_domain}'].sum() if f'clics_{main_domain}' in df_month.columns else 0,
-                    'Ahorro': df_month[f'media_value_{main_domain}'].sum() if f'media_value_{main_domain}' in df_month.columns else 0
+                    'Tráfico': df_month[f'clics_{resolved_global_domain}'].sum() if f'clics_{resolved_global_domain}' in df_month.columns else 0,
+                    'Ahorro': df_month[f'media_value_{resolved_global_domain}'].sum() if f'media_value_{resolved_global_domain}' in df_month.columns else 0
                 })
             progress_bar.progress((i + 1) / len(all_imports))
         progress_bar.empty()
@@ -678,7 +730,7 @@ if current_view == "global":
             st.download_button(
                 label="📥 Descargar Histórico Completo (CSV)",
                 data=csv_history,
-                file_name=f"historico_seo_{main_domain}.csv",
+                file_name=f"historico_seo_{resolved_global_domain}.csv",
                 mime="text/csv"
             )
 
@@ -715,8 +767,16 @@ elif current_view == "monthly" and current_import_id:
             conn.close()
             safe_rerun()
     else:
-        # Filter for selected project domain
-        selected_domain = main_domain
+        # Filter for selected project domain (with auto-resolve)
+        selected_domain, domain_note = resolve_main_domain(main_domain, domain_map)
+        if domain_note:
+            st.warning(f"Dominio principal configurado '{main_domain}' no aparece en el CSV. Se usará '{selected_domain}' para los cálculos.")
+            if mode == "admin":
+                if st.button(f"Actualizar dominio principal a {selected_domain}"):
+                    database.update_project_domain(project_id, selected_domain)
+                    st.success("Dominio principal actualizado.")
+                    time.sleep(1)
+                    safe_rerun()
         
         # Metrics Calculation
         sov_df = etl.calculate_sov(df, domain_map, selected_domain)
@@ -806,6 +866,8 @@ elif current_view == "monthly" and current_import_id:
                     risks_count = risks_mask.sum()
 
         st.title(f"Dashboard SEO: {selected_domain}")
+        if selected_domain != main_domain:
+            st.caption(f"Dominio configurado: {main_domain}")
         
         # P0.4: Show historical depth in caption
         last_month = imports_list.iloc[0]['month'] if not imports_list.empty else "N/A"
@@ -949,14 +1011,15 @@ elif current_view == "monthly" and current_import_id:
             # ==========================================
             st.markdown("---")
             st.markdown("### 🔝 Top 15 Keywords — Evolución vs Competencia")
-            summary_df, evo_df, last_month_top15 = build_top15_evolution(
+            summary_df, evo_df, last_month_top15, top15_reason = build_top15_evolution(
                 project_id,
                 selected_domain,
                 imports_list
             )
 
             if summary_df is None or summary_df.empty:
-                st.info("No hay datos suficientes para calcular el Top 15 por clics estimados.")
+                reason_txt = f" ({top15_reason})" if top15_reason else ""
+                st.info(f"No hay datos suficientes para calcular el Top 15 por clics estimados.{reason_txt}")
             else:
                 st.caption(f"Top 15 por clics estimados del último mes cargado ({last_month_top15}).")
                 st.caption("Competidor referencia: dominio con más clics por keyword en ese mes.")

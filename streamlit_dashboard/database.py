@@ -91,6 +91,13 @@ def save_project(name, main_domain):
     finally:
         conn.close()
 
+def update_project_domain(project_id, main_domain):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE projects SET main_domain = ? WHERE id = ?", (main_domain, project_id))
+    conn.commit()
+    conn.close()
+
 def get_projects():
     conn = get_connection()
     df = pd.read_sql_query("SELECT * FROM projects", conn)
